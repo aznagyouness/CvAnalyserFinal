@@ -1,0 +1,62 @@
+# Core FastAPI stack
+#fastapi	0.128.0: Completely dropped support for pydantic.v1. Your data models and validation code must now be fully compatible with Pydantic v2's native API.
+fastapi==0.128.0
+uvicorn[standard]==0.40.0
+python-multipart==0.0.21
+python-dotenv==1.2.1
+pydantic==2.12.5
+pydantic-settings==2.12.0
+
+
+# File handling
+aiofiles==25.1.0
+
+# AI/ML stack
+langchain==1.2.10
+openai==2.24.0
+cohere==5.20.7
+qdrant-client==1.17.0
+nltk==3.9.3
+
+# MongoDB stack
+# motor is used for async MongoDB operations
+# pymongo is the underlying driver for MongoDB, they are compatible
+motor==3.4.0
+pymongo==4.6.3
+# Consider removing pydantic-mongo if it causes issues
+# pydantic-mongo==2.3.0
+PyMuPDF==1.27.1
+
+# Fixed dependencies to resolve Docker warnings
+urllib3>=2.2.1,<3.0.0  # Resolves RequestsDependencyWarning
+chardet>=5.2.0,<6.0.0   # Resolves RequestsDependencyWarning
+requests>=2.31.0        # Ensures compatibility with urllib3/chardet
+
+# Database dependencies
+SQLAlchemy==2.0.46
+asyncpg==0.31.0
+alembic==1.18.1
+psycopg2==2.9.11
+pgvector==0.4.2
+
+# Monitoring and metrics
+prometheus-client==0.24.1
+starlette-exporter==0.23.0
+fastapi-health==0.4.0
+
+
+
+# for celery task queue and Background Processing
+
+
+celery[librabbitmq,redis]==5.6.2
+
+# For monitoring celery 
+flower==2.0.1
+
+# for celery task queue and Background Processing
+#celery==5.6.2
+#redis==7.1.0
+#kombu==5.6.2
+#billiard==4.2.1
+#vine==5.1.0
