@@ -7,18 +7,24 @@ from pathlib import Path
 from src.helpers.config import get_settings, Settings
 
 from src.controllers import DataController, ProjectController
+
 from src.models.db_schemes.cv_analysis_db.db_tables import Asset, Project
 from src.models.crud.AssetCrud import AssetCrud
 from src.models.crud.ProjectCrud import ProjectCrud
+from src.models.crud.DataChunkCrud import DataChunkCrud
 from src.models.enums.AssetTypeEnum import AssetTypeEnum
 
 from src.models.enums.DataBaseEnum import DataBaseEnum
 from src.database import get_utils
 
 import aiofiles
-from src.models import ResponseSignal
+from src.models.enums.ResponseEnums import ResponseSignal
 import logging
 from typing import List
+from src.routes.schemes.data_schemes import ProcessRequest
+from src.controllers.ProcessController import ProcessController
+
+
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -58,11 +64,11 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
             "filename": filename,
             "success": False,
             "error": result_signal,
-            "file_id": None,
+            "file_name": None,
             "asset_id": None
         }
 
-    file_path, file_id = data_controller.generate_unique_filepath(
+    file_path, file_name = data_controller.generate_unique_filepath(
         orig_file_name=filename,
         project_id=str(project_id)
     )
@@ -85,15 +91,15 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
         asset_record = await asset_crud.create_asset(
             project_id=project_id,
             asset_type=AssetTypeEnum.FILE.value,
-            asset_name=file_id,
+            asset_name=file_name,
             asset_size=size
         )
 
         return {
             "filename": filename,
             "success": True,
-            "file_id": file_id,
-            "asset_id": str(asset_record.asset_project_id) if asset_record else None
+            "file_name": file_name,
+            "asset_id": str(asset_record.asset_id) if asset_record else None
         }
         
     except ValueError as ve:
@@ -104,7 +110,7 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
             "filename": filename,
             "success": False,
             "error": str(ve),
-            "file_id": file_id,
+            "file_name": file_name,
             "asset_id": None
         }
     except Exception as e:
@@ -119,7 +125,7 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
             "filename": filename,
             "success": False,
             "error": ResponseSignal.FILE_UPLOAD_FAILED.value,
-            "file_id": file_id,
+            "file_name": file_name,
             "asset_id": None
         }
     finally:
@@ -194,7 +200,7 @@ async def upload_data(
                 "filename": files[i].filename,
                 "success": False,
                 "error": str(result),
-                "file_id": None,
+                "file_name": None,
                 "asset_id": None
             })
         else:
@@ -221,3 +227,119 @@ async def upload_data(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=response_content)
     else:
         return JSONResponse(status_code=status.HTTP_207_MULTI_STATUS, content=response_content)
+
+
+#------------------
+# Process Endpoint
+#------------------
+
+@data_router.post("/process/{project_id}")
+async def process_endpoint( project_id: int, process_request: ProcessRequest):
+    """
+    Process endpoint for a specific project.
+    - split all project files into chunks or single file if file_name is provided
+    - input : {project_id, file_name, chunk_size, overlap_size, do_reset}
+    """
+
+    #get variables : 
+    file_name = process_request.file_name
+    chunk_size = process_request.chunk_size
+    overlap_size = process_request.overlap_size
+    do_reset = process_request.do_reset
+
+    (db_engine, db_client_sessionmaker) = get_utils()
+
+    #instialize object 
+    process_controller = ProcessController(str(project_id))
+
+    asset_crud = AssetCrud(db_client= db_client_sessionmaker)
+    chunk_crud = DataChunkCrud(db_client= db_client_sessionmaker)
+
+
+    #----------------------------------------logic-------------------------------------------------
+
+    project_files_ids = {}
+
+    # delete all chunks in our DB  :
+    if do_reset:
+        _ = await chunk_crud.delete_chunks_by_project(project_id=project_id)
+
+
+    # 	If a file_name is provided, it fetches that single asset record from the database
+    if file_name:
+        asset_record = await asset_crud.get_asset_by_name(
+            asset_name=file_name,
+            project_id=project_id
+        )
+
+        if asset_record is None:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "signal": ResponseSignal.FILE_NAME_ERROR.value,
+                }
+            )
+
+        project_files_ids = {asset_record.asset_name: asset_record.asset_id}
+        
+    # get all assets in table Asset for project_id
+    else:
+        
+        project_files = await asset_crud.get_assets_by_project(
+            project_id=project_id
+        )
+
+        project_files_ids = {record.asset_name: record.asset_id for record in project_files}
+
+    no_files_to_process = len(project_files_ids)
+
+    # For each file, it loads the file content, splits it into chunks, and inserts the chunks into the database
+    no_chunks = 0
+    no_files_processed = 0
+    for file_name, asset_id in project_files_ids.items():
+        file_content = process_controller.load_documents(file_name)
+
+        if file_content is None:
+            no_files_processed += 1
+            continue
+
+        file_chunks = process_controller.split_documents(file_content, chunk_size, overlap_size)
+
+        # file_chunks is None : no object returned from split_documents
+        # len(file_chunks) == 0 : list of chunks is empty  ==> object created but no chunks
+        if file_chunks is None or len(file_chunks) == 0:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "signal": ResponseSignal.PROCESSING_FAILED.value,
+                }
+            )
+            
+        no_chunks += len(file_chunks) 
+        no_files_processed += 1
+
+        # Prepare batch insertion
+        chunks_to_insert = [
+            {
+                "text": chunk.page_content,
+                "order": i + 1,
+                "metadata": chunk.metadata
+            }
+            for i, chunk in enumerate(file_chunks)
+        ]
+
+        # Insert chunks in batch
+        await chunk_crud.create_chunks_batch(
+            project_id=project_id,
+            asset_id=asset_id,
+            chunks_data=chunks_to_insert
+        )
+
+    return JSONResponse(
+        content={
+            "signal": ResponseSignal.PROCESSING_SUCCESS.value,
+            "inserted_chunks": no_chunks,
+            "processed_files": no_files_processed,
+            "total_files": no_files_to_process,
+        }
+    )

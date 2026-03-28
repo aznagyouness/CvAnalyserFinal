@@ -20,7 +20,7 @@ def test_fastapi():
         }
 
 
-@data_router.get("/welcome_postres")
+@data_router.get("/welcome_postgres")
 def test_postgres():    
     (db_engine, db_client_sessionmaker) = get_utils()   
     return {

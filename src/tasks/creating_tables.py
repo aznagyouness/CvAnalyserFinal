@@ -1,6 +1,6 @@
 from src.celery_app import celery_app
 
-from src.models.crud.UserCrud import UserCrud
+
 from src.models.crud.ProjectCrud import ProjectCrud
 from src.models.crud.AssetCrud import AssetCrud
 

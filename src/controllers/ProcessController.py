@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Optional
+import os
 
 from langchain_core.documents import Document  # Use LangChain's official Document class
 from langchain_community.document_loaders import TextLoader, PyMuPDFLoader
@@ -7,7 +8,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.controllers.BaseController import BaseController
 from src.controllers.ProjectController import ProjectController
-from models import ProcessingEnum
+from src.models.enums.ProcessingEnum import ProcessingEnum
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessController(BaseController):
@@ -21,42 +25,47 @@ class ProcessController(BaseController):
         self.project_id = project_id
         self.project_path = Path(ProjectController().get_project_path(project_id))
 
-    def _get_file_extension(self, file_id: str) -> str:
+    def _get_file_extension(self, file_name: str) -> str:
         """Return file extension including the dot."""
-        return Path(file_id).suffix
+        return Path(file_name).suffix
 
-    def _get_file_loader(self, file_id: str):
+    def _get_file_loader(self, file_name: str):
         """
         Return the appropriate LangChain document loader for the given file.
         Returns None if the file does not exist or extension is unsupported.
         """
         file_path = os.path.join(
             self.project_path,
-            file_id
+            file_name
         )
-        if not file_path.exists():
+        if not os.path.exists(file_path):
             return None
 
-        ext = self._get_file_extension(file_id)
-        loaders = {
-            ProcessingEnum.TXT.value: TextLoader(str(file_path), encoding="utf-8"),
-            ProcessingEnum.PDF.value: PyMuPDFLoader(str(file_path)),
-        }
-        return loaders.get(ext)
+        ext = self._get_file_extension(file_name).lower()
+        try:
+            processing_ext = ProcessingEnum(ext)
+        except ValueError:
+            return None
 
-    def load_documents(self, file_id: str) -> Optional[List[Document]]:
+        loaders = {
+            ProcessingEnum.TXT: TextLoader(str(file_path), encoding="utf-8"),
+            ProcessingEnum.PDF: PyMuPDFLoader(str(file_path)),
+        }
+        return loaders.get(processing_ext)
+
+    def load_documents(self, file_name: str) -> Optional[List[Document]]:
         """
         Load the document(s) from the given file.
         Returns a list of LangChain Document objects, or None if loading fails.
         """
-        loader = self._get_file_loader(file_id)
+        loader = self._get_file_loader(file_name)
         if loader is None:
             return None
         try:
             return loader.load()
         except Exception as e:
             # Log the error appropriately in production
-            print(f"Error loading {file_id}: {e}")
+            logger.error(f"Error loading {file_name}: {e}")
             return None
 
     def split_documents(
@@ -78,17 +87,4 @@ class ProcessController(BaseController):
         )
         return text_splitter.split_documents(documents)
 
-    def process_file(
-        self,
-        file_id: str,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-    ) -> Optional[List[Document]]:
-        """
-        High-level method: load a file and split it into chunks.
-        Returns a list of chunk Documents, or None if any step fails.
-        """
-        docs = self.load_documents(file_id)
-        if docs is None:
-            return None
-        return self.split_documents(docs, chunk_size, chunk_overlap)
+    

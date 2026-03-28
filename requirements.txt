@@ -12,7 +12,12 @@ pydantic-settings==2.12.0
 aiofiles==25.1.0
 
 # AI/ML stack
-langchain==1.2.10
+# for langchain and related dependencies
+langchain==1.2.12
+langchain-community==0.4.1
+langchain-text-splitters==1.1.1
+PyMuPDF==1.27.2.2
+# models provider
 openai==2.24.0
 cohere==5.20.7
 qdrant-client==1.17.0
@@ -25,7 +30,7 @@ motor==3.4.0
 pymongo==4.6.3
 # Consider removing pydantic-mongo if it causes issues
 # pydantic-mongo==2.3.0
-PyMuPDF==1.27.1
+
 
 # Fixed dependencies to resolve Docker warnings
 urllib3>=2.2.1,<3.0.0  # Resolves RequestsDependencyWarning
