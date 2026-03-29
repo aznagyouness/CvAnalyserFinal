@@ -12,8 +12,6 @@ celery_app = Celery(
     backend=settings.CELERY_RESULT_BACKEND_URL,
     include=[
         "src.tasks.test_task",
-        "src.tasks.file_processing",
-        "src.tasks.essai_proc",
         "src.tasks.creating_tables",
     ],
 )
@@ -43,8 +41,6 @@ celery_app.conf.update(
 
     # Routing
     task_routes={
-        "src.tasks.file_processing.fct_celery": {"queue": "file_processing"},
-        "src.tasks.essai_proc.fct_celery2": {"queue": "file_processing"},
         "src.tasks.creating_tables.fct_table_creation": {"queue": "creating_tables"},
 
     },

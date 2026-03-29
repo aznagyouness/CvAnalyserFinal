@@ -46,18 +46,26 @@ class AssetCrud:
             logger.error(f"Error creating asset for project {project_id}: {e}")
             raise
 
-    async def get_asset_by_id(self, asset_id: int) -> Optional[Asset]:
+
+    """
+    - Enhanced Security (Scoping) : Even though asset_id is a unique primary key, adding project_id ensures that a user cannot access an asset belonging to Project A by simply guessing its ID while they are authorized for Project B. It acts as an essential security layer for multi-project isolation.
+    - Data Integrity : It guarantees that the asset you are retrieving actually belongs to the project context you are currently working in, preventing accidental cross-project data leaks or modifications.
+    """
+    async def get_asset_by_name(self, asset_name: str, project_id: int) -> Optional[Asset]:
         """
-        Retrieves an asset by its ID.
+        Retrieves an asset by its name and project ID.
         """
         try:
             async with self.session_factory() as session:
                 result = await session.execute(
-                    select(Asset).where(Asset.asset_id == asset_id)
+                    select(Asset).where(
+                        Asset.asset_name == asset_name,
+                        Asset.asset_project_id == project_id
+                    )
                 )
                 return result.scalar_one_or_none()
         except SQLAlchemyError as e:
-            logger.error(f"Error retrieving asset {asset_id}: {e}")
+            logger.error(f"Error retrieving asset {asset_name}: {e}")
             raise
 
     async def get_assets_by_project(self, project_id: int) -> List[Asset]:
