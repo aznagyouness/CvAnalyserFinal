@@ -2,7 +2,7 @@ import logging
 import uuid
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -127,13 +127,9 @@ class DataChunkCrud:
             async with self.session_factory() as session:
                 async with session.begin():
                     result = await session.execute(
-                        select(DataChunk).where(DataChunk.chunk_project_id == project_id)
+                    delete(DataChunk).where(DataChunk.chunk_project_id == project_id)
                     )
-                    chunks = result.scalars().all()
-                    count = 0
-                    for chunk in chunks:
-                        await session.delete(chunk)
-                        count += 1
+                    count = result.rowcount
                     logger.info(f"Deleted {count} chunks for project {project_id}")
                     return count
         except SQLAlchemyError as e:
