@@ -43,11 +43,11 @@ services:
 
   # Qdrant (VectorDB)
   qdrant:
-    image: qdrant/qdrant:v1.13.6
+    image: qdrant/qdrant:v1.17.0
     container_name: qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "6333:6333"    # REST API (Dashboard & HTTP)
+      - "6334:6334"    # gRPC API (Critical for Python Client)
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
