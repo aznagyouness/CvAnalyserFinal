@@ -108,6 +108,7 @@ class DeepSeekModel(LLMInterface):
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temp,
+                stream=False,
                 **kwargs
             )
 
@@ -118,6 +119,8 @@ class DeepSeekModel(LLMInterface):
         except Exception as e:
             self.logger.error(f"Error during DeepSeek text generation: {str(e)}")
             return ""
+
+
 
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """
@@ -136,11 +139,18 @@ class DeepSeekModel(LLMInterface):
                 **kwargs
             )
 
+            if not response or not response.data:
+                self.logger.error("DeepSeek embedding API returned empty data.")
+                return []
+
             embeddings = [item.embedding for item in response.data]
-            return embeddings if isinstance(text, list) else embeddings[0]
+            
+            # If the original input was a string, return a single list.
+            # Otherwise, return the list of lists.
+            return embeddings[0] if isinstance(text, str) else embeddings
         except Exception as e:
             self.logger.error(f"Error during DeepSeek embedding generation: {str(e)}")
-            return []
+            raise e # Raise to let the caller handle it or for debugging
 
     def construct_prompt(self, prompt: str, role: str) -> dict:
         """

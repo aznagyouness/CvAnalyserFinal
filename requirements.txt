@@ -18,7 +18,7 @@ langchain-community==0.4.1
 langchain-text-splitters==1.1.1
 PyMuPDF==1.27.2.2
 # models provider
-openai==2.24.0
+openai==2.30.0
 cohere==5.20.7
 qdrant-client==1.17.1
 nltk==3.9.3
