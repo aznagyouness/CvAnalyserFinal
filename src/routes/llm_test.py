@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from src.llm.providers.deepseek_model import DeepSeekModel
@@ -15,6 +16,7 @@ deepseek_model = DeepSeekModel(
 )
 deepseek_model.set_generation_model(settings.GENERATION_MODEL_ID)
 deepseek_model.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
+
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -48,6 +50,8 @@ async def test_generate(req: GenerateRequest):
             temperature=req.temperature,
             
         )
+
+        
         return {
             "status": "success", 
             "prompt": req.prompt, 
@@ -88,11 +92,21 @@ async def test_rag_generate(req: RAGGenerateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
 @router.post("/embed")
 async def test_embed(req: EmbedRequest):
     """Test text embedding generation."""
     try:
         embedding = await deepseek_model.embed_text(text=req.text)
-        return {"status": "success", "embedding_size": len(embedding) if isinstance(embedding, list) and not isinstance(embedding[0], list) else "multiple", "embedding": embedding}
+        
+        # Check if we got a list of floats (single embedding) or list of lists (multiple)
+        is_multiple = isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list)
+        
+        return {
+            "status": "success", 
+            "embedding_size": len(embedding) if not is_multiple else f"{len(embedding)} x {len(embedding[0])}", 
+            "embedding": embedding
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

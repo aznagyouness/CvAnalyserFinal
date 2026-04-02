@@ -10,9 +10,9 @@ system: |
   6. Never invent facts or use external knowledge beyond the documents.
 document: |
   ## Document No: {doc_num}
-  {source_line}
+  {source}
   ### Content:
-  {chunk_text}
+  {text}
 footer: |
   ---
   Based **only** on the documents above, answer the following question.

@@ -31,6 +31,8 @@ class LLMInterface(ABC):
         """Asynchronously generates text based on a prompt, optional chat history and RAG documents."""
         pass
 
+
+
     @abstractmethod
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """Asynchronously creates embeddings for the given text(s)."""

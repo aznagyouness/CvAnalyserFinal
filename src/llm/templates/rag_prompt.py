@@ -51,7 +51,7 @@ class RAGPromptManager:
             # Minimal hardcoded defaults if file loading fails
             self.version = "fallback"
             self.system_template = "You are a helpful assistant."
-            self.document_template = "Document {doc_num}: {chunk_text}"
+            self.document_template = "Document {doc_num}: {text}"
             self.footer_template = "Question: {query}"
             self.no_docs_footer_template = "Question: {query}"
 
@@ -70,13 +70,13 @@ class RAGPromptManager:
         """Returns the system prompt."""
         return self.system_template
 
-    def format_document(self, doc_num: int, chunk_text: str, source: Optional[str] = None) -> str:
+    def format_document(self, doc_num: int, text: str, source: Optional[str] = None) -> str:
         """Formats a single retrieved document chunk."""
-        source_line = f"### Source: {source}" if source else ""
+        source_str = f"### Source: {source}" if source else ""
         return self.document_template.format(
             doc_num=doc_num,
-            source_line=source_line,
-            chunk_text=chunk_text.strip()
+            source=source_str,
+            text=text.strip()
         )
 
     def format_footer(self, query: str, has_docs: bool = True) -> str:

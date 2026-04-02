@@ -270,6 +270,8 @@ We have also added a dedicated suite for testing the DeepSeek model and RAG prom
 
 ### 2. RAG-Based Generation (With Documents)
 **URL**: `POST http://localhost:8000/test/llm/rag-generate`
+
+#### Example (English - en.yaml) 🇺🇸
 ```json
 {
   "prompt": "What is the candidate's name?",
@@ -280,6 +282,28 @@ We have also added a dedicated suite for testing the DeepSeek model and RAG prom
 }
 ```
 
+#### Example (Arabic - ar.yaml) 🇸🇦
+```json
+{
+  "prompt": "ما هو اسم المرشح؟",
+  "documents": [
+    {"text": "اسم المرشح هو أحمد علي، مطور بايثون محترف.", "source": "cv_ahmed.pdf"}
+  ],
+  "lang": "ar"
+}
+```
+
+#### Example (French - fr.yaml) 🇫🇷
+```json
+{
+  "prompt": "Quel est le nom du candidat ?",
+  "documents": [
+    {"text": "Le nom du candidat est Jean Dupont, développeur Python senior.", "source": "cv_jean.pdf"}
+  ],
+  "lang": "fr"
+}
+```
+
 ### 3. Text Embedding
 **URL**: `POST http://localhost:8000/test/llm/embed`
 ```json
@@ -287,6 +311,100 @@ We have also added a dedicated suite for testing the DeepSeek model and RAG prom
   "text": "This is a test string for embedding."
 }
 ```
+
+---
+
+## 🎓 8. Mastering Prompt Templates (YAML)
+
+Welcome to the most important part of "Engineering" in Prompt Engineering! In this project, we don't hardcode prompts inside our Python files. Instead, we use **YAML templates**.
+
+### 1. Why use YAML? (The Teacher's Philosophy)
+Imagine you want to change the tone of your assistant from "Professional" to "Friendly."
+- **Bad Way**: Search through 50 Python files, find every string, and change them. (Messy!)
+- **The Best Way**: Open one YAML file, change the `system` message, and you're done! (Clean 💎).
+
+### 2. Where are they located?
+Look in `src/llm/templates/prompts/`. You will see:
+- `en.yaml` (English)
+- `ar.yaml` (Arabic)
+- `fr.yaml` (French)
+
+### 3. How the "Magic" works
+When you call `rag-generate` with `"lang": "ar"`, our `RAGPromptManager` does this:
+1.  **Selection**: It looks for `ar.yaml`.
+2.  **Loading**: It reads the templates using the `yaml` library.
+3.  **Filling**: It takes your documents and "injects" them into the placeholders.
+
+#### 🎓 Teacher's Example: The Loading Code
+Here is a simplified version of how we extract the data from your YAML files in Python:
+
+```python
+import yaml
+from pathlib import Path
+
+def load_my_prompt(lang="en"):
+    # 1. Path to your YAML file
+    prompt_path = Path("src/llm/templates/prompts") / f"{lang}.yaml"
+    
+    # 2. Open and Load
+    with open(prompt_path, "r", encoding="utf-8") as file:
+        data = yaml.safe_load(file)
+    
+    # 3. Access the data like a Dictionary!
+    system_personality = data.get("system")
+    doc_structure = data.get("document")
+    
+    return system_personality, doc_structure
+
+# Now you can use them!
+personality, structure = load_my_prompt("ar")
+print(f"The AI is now: {personality}")
+```
+
+#### 🎓 Teacher's Example: Filling the Variables
+Once you have the template from the YAML, you need to "fill" the variables like `{doc_num}` and `{text}`. In Python, we use the `.format()` method for this.
+
+```python
+# 1. Get the template from YAML (as shown above)
+document_template = "## Document No: {doc_num}\n{source}\n### Content:\n{text}"
+
+# 2. Your real data from Qdrant
+real_doc_number = 1
+real_source = "### Source: cv_youness.pdf"
+real_content = "John Doe is a Senior Developer with 10 years of experience."
+
+# 3. The Injection (The Magic Step ✨)
+filled_document = document_template.format(
+    doc_num=real_doc_number, 
+    source=real_source,
+    text=real_content
+)
+
+print(filled_document)
+# Output:
+# ## Document No: 1
+# ### Source: cv_youness.pdf
+# ### Content:
+# John Doe is a Senior Developer with 10 years of experience.
+```
+
+**Why this is powerful**: You can loop through 100 documents and use the same template to format all of them perfectly!
+
+### 4. Anatomy of a Template File
+Open `en.yaml` and you'll see four main sections:
+
+1.  **`system`**: The "Personality" of the AI. It tells the model *how* to behave (e.g., "You are a helpful assistant...").
+2.  **`document`**: The "Structure" of the context. It tells the AI *how* to read your data.
+    - **Teacher's Secret**: We use placeholders like `{doc_num}` and `{text}`. These are variables that our Python code fills in automatically for every chunk found in Qdrant!
+3.  **`footer`**: The "Call to Action". It places your question at the very end of the prompt so the AI doesn't forget it.
+4.  **`no_docs_footer`**: The "Safety Net". If Qdrant finds nothing, this tells the AI to politely say "I don't know" instead of making things up (hallucinating).
+
+### 5. How to add a New Language (e.g., Spanish 🇪🇸)
+It's as easy as 1-2-3:
+1.  Create a new file: `src/llm/templates/prompts/es.yaml`.
+2.  Copy the content of `en.yaml`.
+3.  Translate the text (but **DO NOT** change the variables like `{doc_num}`, `{source}`, or `{query}`).
+4.  Now you can call your API with `"lang": "es"`!
 
 ---
 *Ready to build the future? Check your `welcome_vectordb` route to see this in action!*
