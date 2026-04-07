@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     COHERE_API_KEY: str = None
     DEEPSEEK_API_KEY: str = None
     DEEPSEEK_API_URL: str = None
+    QWEN_API_KEY: str = None
+    QWEN_API_URL: str = None
+    MINIMAX_API_KEY: str = None
+    MINIMAX_API_URL: str = None
+
+
 
     GENERATION_MODEL_ID_LITERAL: List[str] = None
     GENERATION_MODEL_ID: str = None

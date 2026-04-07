@@ -1,7 +1,6 @@
 import os
 import logging
 from typing import List, Union, Optional, Dict, Any
-import asyncio
 from openai import AsyncOpenAI
 from src.llm.llm_interface import LLMInterface
 from src.llm.LLMEnums import LLMRoleEnums
@@ -11,9 +10,10 @@ from src.helpers.config import get_settings
 
 settings = get_settings()
 
-class DeepSeekModel(LLMInterface):
+class MinimaxModel(LLMInterface):
     """
-    Asynchronous implementation of the DeepSeek model using AsyncOpenAI client.
+    Asynchronous implementation of the Minimax model using AsyncOpenAI client.
+    Minimax API is OpenAI-compatible.
     """
 
     def __init__(
@@ -25,10 +25,10 @@ class DeepSeekModel(LLMInterface):
         default_generation_temperature: float = 0.7
     ):
         """
-        Initializes the DeepSeek model with an asynchronous client.
+        Initializes the Minimax model with an asynchronous client.
         """
-        self.api_key = api_key if api_key else settings.DEEPSEEK_API_KEY
-        self.api_url = api_url if api_url else settings.DEEPSEEK_API_URL
+        self.api_key = api_key if api_key else settings.MINIMAX_API_KEY
+        self.api_url = api_url if api_url else settings.MINIMAX_API_URL
 
         self.default_input_max_characters = default_input_max_characters
         self.default_generation_max_output_tokens = default_generation_max_output_tokens
@@ -39,7 +39,7 @@ class DeepSeekModel(LLMInterface):
         self.embedding_size = None
 
         if not self.api_key:
-            raise ValueError("DEEPSEEK_API_KEY must be provided or set as an environment variable.")
+            raise ValueError("MINIMAX_API_KEY must be provided or set as an environment variable.")
 
         self.client = AsyncOpenAI(
             api_key=self.api_key,
@@ -70,7 +70,7 @@ class DeepSeekModel(LLMInterface):
         **kwargs
     ) -> str:
         """
-        Asynchronously generates a response from DeepSeek.
+        Asynchronously generates a response from Minimax.
         If documents are provided, it builds a RAG-optimized prompt.
         """
         if not self.generation_model_id:
@@ -82,23 +82,15 @@ class DeepSeekModel(LLMInterface):
 
         # Prepare messages
         if documents:
-            # RAG flow: Use RAGPromptManager to build messages
             prompt_manager = RAGPromptManager(lang=lang)
-            # We assume the context window for DeepSeek is large, 
-            # but we limit the prompt part to around 8k tokens for safety
             messages = prompt_manager.build_messages(
                 query=prompt, 
                 documents=documents,
                 max_input_tokens=8000 
             )
-            # If there's existing chat history, we can prepend it (before system prompt or between system/user)
-            # For simplicity in RAG, we'll append the built RAG messages to history if provided
             if chat_history:
-                # Merge: [history...] + [RAG system] + [RAG user]
-                # Note: DeepSeek usually prefers one system message at the start.
                 messages = chat_history + messages
         else:
-            # Standard flow
             messages = list(chat_history)
             messages.append(self.construct_prompt(prompt=prompt, role=LLMRoleEnums.USER.value))
 
@@ -117,14 +109,12 @@ class DeepSeekModel(LLMInterface):
             
             return ""
         except Exception as e:
-            self.logger.error(f"Error during DeepSeek text generation: {str(e)}")
+            self.logger.error(f"Error during Minimax text generation: {str(e)}")
             raise e
-
-
 
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """
-        Asynchronously generates embeddings using DeepSeek (if supported) or compatible endpoint.
+        Asynchronously generates embeddings using Minimax.
         """
         if not self.embedding_model_id:
             self.logger.error("Embedding model ID was not set.")
@@ -140,17 +130,14 @@ class DeepSeekModel(LLMInterface):
             )
 
             if not response or not response.data:
-                self.logger.error("DeepSeek embedding API returned empty data.")
+                self.logger.error("Minimax embedding API returned empty data.")
                 return []
 
             embeddings = [item.embedding for item in response.data]
-            
-            # If the original input was a string, return a single list.
-            # Otherwise, return the list of lists.
             return embeddings[0] if isinstance(text, str) else embeddings
         except Exception as e:
-            self.logger.error(f"Error during DeepSeek embedding generation: {str(e)}")
-            raise e # Raise to let the caller handle it or for debugging
+            self.logger.error(f"Error during Minimax embedding generation: {str(e)}")
+            raise e
 
     def construct_prompt(self, prompt: str, role: str) -> dict:
         """
@@ -160,5 +147,3 @@ class DeepSeekModel(LLMInterface):
             "role": role,
             "content": prompt
         }
-
-
