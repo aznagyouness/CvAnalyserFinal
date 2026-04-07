@@ -255,60 +255,32 @@ We have built a dedicated testing suite in `src/routes/qdrant_test.py` to help y
 
 ---
 
-## 🤖 7. Testing the LLM (DeepSeek)
+## 🤖 7. Testing the LLM (Multi-Provider Support)
 
-We have also added a dedicated suite for testing the DeepSeek model and RAG prompts in `src/routes/llm_test.py`.
+We have upgraded our LLM module to support multiple providers (DeepSeek and qwen) via a unified **LLMFactory**. You can test them using `src/routes/llm_test.py`.
 
-### 1. Basic Text Generation
-**URL**: `POST http://localhost:8000/test/llm/generate`
+### Supported Providers
+- `"provider": "deepseek"` 
+- `"provider": "qwen"` (Default)
+
+### Example Postman Requests
+
+#### 1. Standard Generation
+**POST** `/test/llm/generate`
 ```json
 {
-  "prompt": "Hello, how can you help me today?",
-  "temperature": 0.7
+  "provider": "qwen",
+  "prompt": "Hello qwen! What are your capabilities?",
+  "chat_history": []
 }
 ```
 
-### 2. RAG-Based Generation (With Documents)
-**URL**: `POST http://localhost:8000/test/llm/rag-generate`
-
-#### Example (English - en.yaml) 🇺🇸
+#### 3. Embedding Generation
+**POST** `/test/llm/embed`
 ```json
 {
-  "prompt": "What is the candidate's name?",
-  "documents": [
-    {"text": "Candidate name is John Doe, a senior Python developer.", "source": "cv_john.pdf"}
-  ],
-  "lang": "en"
-}
-```
-
-#### Example (Arabic - ar.yaml) 🇸🇦
-```json
-{
-  "prompt": "ما هو اسم المرشح؟",
-  "documents": [
-    {"text": "اسم المرشح هو أحمد علي، مطور بايثون محترف.", "source": "cv_ahmed.pdf"}
-  ],
-  "lang": "ar"
-}
-```
-
-#### Example (French - fr.yaml) 🇫🇷
-```json
-{
-  "prompt": "Quel est le nom du candidat ?",
-  "documents": [
-    {"text": "Le nom du candidat est Jean Dupont, développeur Python senior.", "source": "cv_jean.pdf"}
-  ],
-  "lang": "fr"
-}
-```
-
-### 3. Text Embedding
-**URL**: `POST http://localhost:8000/test/llm/embed`
-```json
-{
-  "text": "This is a test string for embedding."
+  "provider": "qwen",
+  "text": "This is a test string for qwen embedding."
 }
 ```
 
