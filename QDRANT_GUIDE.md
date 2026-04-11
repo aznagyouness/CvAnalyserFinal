@@ -50,6 +50,26 @@ client = AsyncQdrantClient(
 )
 ```
 
+### 1.1 Disconnecting (Cleaning Up 🧹)
+It is important to close the client when your application or test is finished. This releases network resources and prevents "leaking" connections.
+
+```python
+# Modern way to close
+await client.close()
+```
+
+**Teacher's Tip**: If you are using FastAPI, you usually initialize the client once at startup and close it once at shutdown. In a test script, always use a `try...finally` block:
+
+```python
+client = AsyncQdrantClient(...)
+try:
+    # Do your work
+    await client.get_collections()
+finally:
+    # Always runs, even if there's an error!
+    await client.close()
+```
+
 #### 🎓 Teacher's Secret: Which Port to Use? (6333 vs 6334)
 Students often ask: *"If 6334 is for speed, why do we put 6333 in the URL?"*
 
@@ -257,11 +277,12 @@ We have built a dedicated testing suite in `src/routes/qdrant_test.py` to help y
 
 ## 🤖 7. Testing the LLM (Multi-Provider Support)
 
-We have upgraded our LLM module to support multiple providers (DeepSeek and qwen) via a unified **LLMFactory**. You can test them using `src/routes/llm_test.py`.
+We have upgraded our LLM module to support multiple providers (**DeepSeek**, **qwen**, and **Minimax**) via a unified **LLMFactory**. You can test them using `src/routes/llm_test.py`.
 
 ### Supported Providers
 - `"provider": "deepseek"` 
 - `"provider": "qwen"` (Default)
+- `"provider": "minimax"`
 
 ### Example Postman Requests
 
@@ -272,6 +293,25 @@ We have upgraded our LLM module to support multiple providers (DeepSeek and qwen
   "provider": "qwen",
   "prompt": "Hello qwen! What are your capabilities?",
   "chat_history": []
+}
+```
+
+#### 2. RAG-Based Generation (The Core of AI Search)
+This is where the magic happens! You send your query **plus** the documents you found in Qdrant. The AI uses the documents to answer your question accurately.
+
+**POST** `/test/llm/rag-generate`
+```json
+{
+  "provider": "qwen",
+  "prompt": "What is the candidate's name?",
+  "documents": [
+    {
+      "text": "The candidate name is John Doe, a senior engineer.",
+      "source": "cv_john_doe.pdf"
+    }
+  ],
+  "lang": "en",
+  "temperature": 0.5
 }
 ```
 
@@ -286,7 +326,89 @@ We have upgraded our LLM module to support multiple providers (DeepSeek and qwen
 
 ---
 
-## 🎓 8. Mastering Prompt Templates (YAML)
+## 🚀 8. Production API (Data Endpoints)
+
+Before you can perform AI search (NLP), you must first **upload** your files and **chunk** them into smaller pieces. These endpoints in `src/routes/data.py` handle the raw data flow.
+
+### 1. Uploading Files (Ingestion)
+This endpoint handles the physical upload of your CVs (PDF, TXT) to the server and registers them in the PostgreSQL `assets` table.
+
+**POST** `/api/v1/data/upload/{project_id}`
+- **Function Name**: `upload_project_files`
+- **Description**: Uploads one or multiple files concurrently.
+- **Body**: `form-data` with a `files` key containing your documents.
+- **Teacher's Note**: It automatically creates a unique filename and saves it in `assets/files/{project_id}/`.
+
+### 2. Chunking Documents (Transformation)
+Once the files are uploaded, you must "split" them into smaller parts (chunks) so the AI can read them efficiently.
+
+**POST** `/api/v1/data/process/{project_id}`
+- **Function Name**: `chunk_project_assets`
+- **Description**: Loads the documents, splits them into pieces (e.g., 1000 characters), and saves them in the PostgreSQL `chunks` table.
+- **Body**:
+```json
+{
+  "file_name": null, 
+  "chunk_size": 1000,
+  "overlap_size": 200,
+  "do_reset": 1
+}
+```
+> **Teacher's Tip**: Set `do_reset: 1` if you want to delete old chunks for this project and start fresh!
+
+---
+
+## 🚀 9. Production API (NLP Endpoints)
+
+While the `/test/llm` routes are for quick experiments, the `/api/v1/nlp` routes are the **Production-Ready** endpoints. These connect your SQL database (Postgres) with your Vector database (Qdrant) and your LLM providers.
+
+### 1. Indexing a Project (Push to Vector DB)
+Before you can search, you must "push" your CV chunks from the SQL database into Qdrant.
+
+**POST** `/api/v1/nlp/index/push/{project_id}`
+- **Description**: Fetches all chunks for a project and generates embeddings for them.
+- **Body**:
+```json
+{
+  "do_reset": 1, 
+  "provider": "qwen"
+}
+```
+> **Teacher's Note**: Use `do_reset: 1` if you want to clear the old collection and start fresh!
+
+### 2. Semantic Search (Pure Retrieval)
+Find the most relevant CV parts without generating an AI answer.
+
+**POST** `/api/v1/nlp/search/{project_id}`
+- **Body**:
+```json
+{
+  "text": "Experience with Python and FastAPI",
+  "limit": 5,
+  "provider": "qwen"
+}
+```
+
+### 3. The Full RAG Pipeline (Ask Questions)
+The most powerful endpoint! It searches Qdrant, builds a prompt, and generates a natural language answer.
+
+**POST** `/api/v1/nlp/answer/{project_id}`
+- **Description**: Performs Search + RAG Generation in one call.
+- **Body**:
+```json
+{
+  "query": "Does this candidate have experience with Docker?",
+  "provider": "qwen",
+  "lang": "en",
+  "limit": 5,
+  "chat_history": []
+}
+```
+- **Response**: Returns the `answer` string and the list of `retrieved_documents` used.
+
+---
+
+## 🎓 10. Mastering Prompt Templates (YAML)
 
 Welcome to the most important part of "Engineering" in Prompt Engineering! In this project, we don't hardcode prompts inside our Python files. Instead, we use **YAML templates**.
 

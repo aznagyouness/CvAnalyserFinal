@@ -19,7 +19,7 @@ class QwenModel(LLMInterface):
     def __init__(
         self, 
         api_key: Optional[str] = None, 
-        api_url: str ,
+        api_url: Optional[str] = None,
         default_input_max_characters: int = 4000,
         default_generation_max_output_tokens: int = 2000,
         default_generation_temperature: float = 0.7
@@ -117,26 +117,43 @@ class QwenModel(LLMInterface):
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """
         Asynchronously generates embeddings using qwen.
+        Handles automatic batching if the input list exceeds 10 items.
         """
         if not self.embedding_model_id:
             self.logger.error("Embedding model ID was not set.")
             return []
 
-        input_text = [text] if isinstance(text, str) else text
+        # Convert single string to list for unified processing
+        is_single_input = isinstance(text, str)
+        input_texts = [text] if is_single_input else text
+        
+        # Qwen has a strict limit of 10 items per batch
+        batch_size = 10
+        all_embeddings = []
 
         try:
-            response = await self.client.embeddings.create(
-                model=self.embedding_model_id,
-                input=input_text,
-                **kwargs
-            )
+            # Process in batches
+            for i in range(0, len(input_texts), batch_size):
+                batch = input_texts[i : i + batch_size]
+                
+                response = await self.client.embeddings.create(
+                    model=self.embedding_model_id,
+                    input=batch,
+                    **kwargs
+                )
 
-            if not response or not response.data:
-                self.logger.error("qwen embedding API returned empty data.")
+                if not response or not response.data:
+                    self.logger.error(f"qwen embedding API returned empty data for batch {i//batch_size}.")
+                    continue
+
+                batch_embeddings = [item.embedding for item in response.data]
+                all_embeddings.extend(batch_embeddings)
+
+            if not all_embeddings:
                 return []
 
-            embeddings = [item.embedding for item in response.data]
-            return embeddings[0] if isinstance(text, str) else embeddings
+            return all_embeddings[0] if is_single_input else all_embeddings
+            
         except Exception as e:
             self.logger.error(f"Error during qwen embedding generation: {str(e)}")
             raise e

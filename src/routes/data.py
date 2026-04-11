@@ -174,7 +174,7 @@ async def upload_data(
     
     # Ensure project directory exists
     project_dir_path = project_controller.get_project_path(project_id=str(project_id))
-    os.makedirs(project_dir_path, exist_ok=True)
+    Path(project_dir_path).mkdir(parents=True, exist_ok=True)
 
     # Process files concurrently
     tasks = [
