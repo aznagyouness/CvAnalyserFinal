@@ -163,6 +163,7 @@ class QdrantDBProvider(VectorDBInterface):
             RetrievedDocumentEnum(**{
                 "score": result.score,
                 "text": result.payload.get("text", ""),
+                "metadata": result.payload
             })
             for result in results.points
         ]

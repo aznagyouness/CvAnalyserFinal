@@ -124,33 +124,47 @@ class DeepSeekModel(LLMInterface):
 
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """
-        Asynchronously generates embeddings using DeepSeek (if supported) or compatible endpoint.
+        Asynchronously generates embeddings using DeepSeek.
+        Handles automatic batching if the input list is large.
         """
         if not self.embedding_model_id:
             self.logger.error("Embedding model ID was not set.")
             return []
 
-        input_text = [text] if isinstance(text, str) else text
+        # Convert single string to list for unified processing
+        is_single_input = isinstance(text, str)
+        input_texts = [text] if is_single_input else text
+        
+        # Using a safe batch size of 50 for DeepSeek/compatible endpoints
+        batch_size = 50
+        all_embeddings = []
 
         try:
-            response = await self.client.embeddings.create(
-                model=self.embedding_model_id,
-                input=input_text,
-                **kwargs
-            )
+            # Process in batches
+            for i in range(0, len(input_texts), batch_size):
+                batch = input_texts[i : i + batch_size]
+                
+                response = await self.client.embeddings.create(
+                    model=self.embedding_model_id,
+                    input=batch,
+                    **kwargs
+                )
 
-            if not response or not response.data:
-                self.logger.error("DeepSeek embedding API returned empty data.")
+                if not response or not response.data:
+                    self.logger.error(f"DeepSeek embedding API returned empty data for batch {i//batch_size}.")
+                    continue
+
+                batch_embeddings = [item.embedding for item in response.data]
+                all_embeddings.extend(batch_embeddings)
+
+            if not all_embeddings:
                 return []
 
-            embeddings = [item.embedding for item in response.data]
+            return all_embeddings[0] if is_single_input else all_embeddings
             
-            # If the original input was a string, return a single list.
-            # Otherwise, return the list of lists.
-            return embeddings[0] if isinstance(text, str) else embeddings
         except Exception as e:
             self.logger.error(f"Error during DeepSeek embedding generation: {str(e)}")
-            raise e # Raise to let the caller handle it or for debugging
+            raise e
 
     def construct_prompt(self, prompt: str, role: str) -> dict:
         """
