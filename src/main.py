@@ -12,8 +12,8 @@ from src.database import get_utils
 async def lifespan(app: FastAPI):
     # Startup
     settings = get_settings()
-    print("✅ Loaded settings:", settings.model_dump())
-    (db_engine, db_client_sessionmaker) = get_utils()
+    print("✅ all variable in settings using get_settings() with pydantic are loaded.")
+    #(db_engine, db_client_sessionmaker) = await get_utils()
 
     print("✅ Application started successfully")
 
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    await db_engine.dispose()
+    # await db_engine.dispose()
     
     # Shutdown  
     print("👋 Shutting down...")

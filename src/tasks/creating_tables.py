@@ -36,7 +36,7 @@ async def _fct_table_creation(instance, project_id, ):
     # Your task logic here
     # simultanous tasks example
     
-    (db_engine, db_client_sessionmaker) = get_utils()
+    (db_engine, db_client_sessionmaker) = await get_utils()
 
     user_crud = UserCrud(db_client_sessionmaker)
     project_crud = ProjectCrud(db_client_sessionmaker)

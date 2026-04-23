@@ -10,6 +10,9 @@ from src.controllers.BaseController import BaseController
 from src.controllers.ProjectController import ProjectController
 from src.models.enums.ProcessingEnum import ProcessingEnum
 import logging
+from src.helpers.config import get_settings
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +74,20 @@ class ProcessController(BaseController):
     def split_documents(
         self,
         documents: List[Document],
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
+        chunk_size: int = settings.CHUNK_SIZE,
+        chunk_overlap: int = settings.CHUNK_OVERLAP,
     ) -> List[Document]:
         """
         Split a list of LangChain Documents into smaller chunks using
         RecursiveCharacterTextSplitter. Metadata from the original documents
         is automatically copied to each chunk.
         """
+        # Clean NULL characters from document content before splitting
+        # PostgreSQL does not allow '\x00' in TEXT/VARCHAR columns
+        for doc in documents:
+            if doc.page_content:
+                doc.page_content = doc.page_content.replace("\x00", "")
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

@@ -21,8 +21,8 @@ def test_fastapi():
 
 
 @data_router.get("/welcome_postgres")
-def test_postgres():    
-    (db_engine, db_client_sessionmaker) = get_utils()   
+async def test_postgres():    
+    (db_engine, db_client_sessionmaker) = await get_utils()   
     return {
         "message ": "Postgres Docker connection successful!",
         "db_engine": str(db_engine),
@@ -85,8 +85,8 @@ vectordb_client = QdrantClient(
 ) """
 
 @data_router.get("/welcome_vectordb")
-def test_vector_db():    
-    (db_engine, db_client_sessionmaker) = get_utils()   
+async def test_vector_db():    
+    (db_engine, db_client_sessionmaker) = await get_utils()   
     return {
         "message ": "VectorDBProvider connection successful!",
         "db_engine": str(db_engine),

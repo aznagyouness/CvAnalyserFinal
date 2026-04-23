@@ -10,6 +10,8 @@ from src.database import get_utils
 from src.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from tqdm.auto import tqdm
 import logging
+import time
+from src.llm.LLMFactory import LLMFactory
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -20,8 +22,10 @@ nlp_router = APIRouter(
 
 @nlp_router.post("/index/push/{project_id}")
 async def index_project(request: Request, project_id: int, push_request: PushRequest, settings: Settings = Depends(get_settings)):
+    db_engine = None
+    vdb_client = None
     try:
-        (db_engine, db_client_sessionmaker) = get_utils()
+        (db_engine, db_client_sessionmaker) = await get_utils()
         project_crud = ProjectCrud(db_client=db_client_sessionmaker)
         chunk_crud = DataChunkCrud(db_client=db_client_sessionmaker)
 
@@ -37,7 +41,8 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
         vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)
         await vdb_client.connect()
         
-        nlp_controller = NLPController(vectordb_client=vdb_client)
+        llm = LLMFactory.get_llm(provider=push_request.provider)
+        nlp_controller = NLPController(vectordb_client=vdb_client,llm_client=llm)
         nlp_controller.set_project_id(project_id=str(project_id))
 
         has_records = True
@@ -82,17 +87,34 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignal.INSERT_INTO_VECTORDB_ERROR.value, "detail": str(e)}
         )
+    
+    finally:
+        if vdb_client : 
+            await vdb_client.disconnect()
+        if db_engine : 
+            await db_engine.dispose()
+
 
 @nlp_router.post("/search/{project_id}")
 async def search_project(request: Request, project_id: int, search_request: SearchRequest, settings: Settings = Depends(get_settings)):
+    db_engine = None
+    vdb_client = None
     try:
-        (db_engine, db_client_sessionmaker) = get_utils()
+        (db_engine, db_client_sessionmaker) = await get_utils()
         vdb_factory = VectorDBProviderFactory(config=settings, db_client=db_client_sessionmaker)
         vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)
         await vdb_client.connect()
+
         
-        nlp_controller = NLPController(vectordb_client=vdb_client)
+        llm = LLMFactory.get_llm(provider=search_request.provider)
+        nlp_controller = NLPController(vectordb_client=vdb_client,llm_client=llm)
         nlp_controller.set_project_id(project_id=str(project_id))
+
+        # Initialize the embedding model before searching
+        nlp_controller.llm_client.set_embedding_model(
+            settings.EMBEDDING_MODEL_ID, 
+            settings.EMBEDDING_MODEL_SIZE
+        )
 
         results = await nlp_controller.search_vector_db_collection(
             project_id=project_id,
@@ -125,16 +147,49 @@ async def search_project(request: Request, project_id: int, search_request: Sear
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignal.VECTORDB_SEARCH_ERROR.value, "detail": str(e)}
         )
+    
+    finally:
+        if vdb_client : 
+            await vdb_client.disconnect()
+        if db_engine : 
+            await db_engine.dispose()
+
+
+
 
 @nlp_router.post("/answer/{project_id}")
 async def answer_question(request: Request, project_id: int, rag_request: RAGRequest, settings: Settings = Depends(get_settings)):
+    start_endpoint = time.time()
+
+    db_engine = None
+    vdb_client = None
     try:
-        (db_engine, db_client_sessionmaker) = get_utils()
+        start = time.time()
+        (db_engine, db_client_sessionmaker) = await get_utils()
         vdb_factory = VectorDBProviderFactory(config=settings, db_client=db_client_sessionmaker)
         vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)
+        await vdb_client.connect()
+        end_time = time.time()
+        logger.info(f"Connected to VectorDB in {end_time - start} seconds")
         
-        nlp_controller = NLPController(vectordb_client=vdb_client)
+        start = time.time()
+        
+        llm = LLMFactory.get_llm(provider=rag_request.provider)
+
+        nlp_controller = NLPController(vectordb_client=vdb_client,llm_client=llm)
         nlp_controller.set_project_id(project_id=str(project_id))
+        
+        nlp_controller.llm_client.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
+        
+        end_time = time.time()
+        logger.info(f"Set embedding model in {end_time - start} seconds")
+
+        start = time.time()
+        nlp_controller.llm_client.set_generation_model(settings.GENERATION_MODEL_ID)
+        end_time = time.time()
+        logger.info(f"Set generation model in {end_time - start} seconds")
+        
+        start = time.time()
 
         answer, full_history, retrieved_documents = await nlp_controller.answer_rag_question(
             project_id=project_id,
@@ -144,6 +199,8 @@ async def answer_question(request: Request, project_id: int, rag_request: RAGReq
             lang=rag_request.lang,
             chat_history=rag_request.chat_history
         )
+        end_time = time.time()
+        logger.info(f"Answered question with answer_rag_question in {end_time - start} seconds")
 
         return JSONResponse(
             content={
@@ -164,6 +221,18 @@ async def answer_question(request: Request, project_id: int, rag_request: RAGReq
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value, "detail": str(e)}
         )
+    finally:
+        if vdb_client : 
+            await vdb_client.disconnect()
+        if db_engine : 
+            await db_engine.dispose()
+    
+        end_endpoint = time.time()
+        logger.info(f"Endpoint processed in {end_endpoint - start_endpoint} seconds")
+
+
+
+
 
 
 @nlp_router.get("/index/info/{project_id}")
@@ -230,7 +299,7 @@ async def search_index(request: Request, project_id: int, search_request: Search
         }
     )
 
-@nlp_router.post("/index/answer/{project_id}")
+""" @nlp_router.post("/index/answer/{project_id}")
 async def answer_rag(request: Request, project_id: int, search_request: SearchRequest):
     
     project_model = await ProjectModel.create_instance(
@@ -270,3 +339,4 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
             "chat_history": chat_history
         }
     )
+ """

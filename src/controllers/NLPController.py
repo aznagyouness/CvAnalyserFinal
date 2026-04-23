@@ -6,14 +6,19 @@ from src.helpers.config import get_settings
 from typing import List, Optional, Dict, Any
 import json
 import logging
+import time
+
+
 
 settings = get_settings()
 
 class NLPController(BaseController):
 
-    def __init__(self, vectordb_client):
+    def __init__(self, vectordb_client=None,llm_client=None):
         super().__init__()
         self.vectordb_client = vectordb_client      
+        self.llm_client = llm_client
+        # like llm = LLMFactory.get_llm(provider=provider)
         self.logger = logging.getLogger(__name__)
         self.project_id = None
 
@@ -43,23 +48,22 @@ class NLPController(BaseController):
         # step1: get collection name
         collection_name = self.create_collection_name(project_id=project_id)
 
+ 
         # step2: get embedding client
-        llm = LLMFactory.get_llm(provider=provider)
-
-        llm.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
-        
+        #llm = LLMFactory.get_llm(provider=provider)
+        self.llm_client.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
 
         # step3: manage items
         texts = [ c.chunk_text for c in chunks ]
         metadata = [ c.chunk_metadata for c in  chunks]
         
         # Async embed
-        vectors = await llm.embed_text(text=texts)
+        vectors = await self.llm_client.embed_text(text=texts)
 
         # step4: create collection if not exists
         _ = await self.vectordb_client.create_collection(
             collection_name=collection_name,
-            embedding_size=llm.embedding_size,
+            embedding_size=self.llm_client.embedding_size,
             do_reset=do_reset if do_reset else False,
         )
 
@@ -82,11 +86,11 @@ class NLPController(BaseController):
         collection_name = self.create_collection_name(project_id=project_id)
 
         # step2: get embedding client
-        llm = LLMFactory.get_llm(provider=provider)
-        llm.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
+        #llm = LLMFactory.get_llm(provider=provider)
+        #llm.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
 
         # step3: get text embedding vector
-        vectors = await llm.embed_text(text=text)
+        vectors = await self.llm_client.embed_text(text=text)
 
         if not vectors or len(vectors) == 0:
             return False
@@ -110,6 +114,8 @@ class NLPController(BaseController):
                                  lang: str = "en",
                                  chat_history: List[dict] = []):
         
+        start = time.time()
+
         # step1: retrieve related documents
         retrieved_documents = await self.search_vector_db_collection(
             project_id=project_id,
@@ -118,12 +124,15 @@ class NLPController(BaseController):
             provider=provider
         )
 
+        end_time = time.time()
+        print(f"Retrieved {len(retrieved_documents)} documents in {end_time - start} seconds")
+
         if not retrieved_documents or len(retrieved_documents) == 0:
             return "I couldn't find any relevant information to answer your question.", [], []
         
         # step2: get generation client
-        llm = LLMFactory.get_llm(provider=provider)
-        llm.set_generation_model(settings.GENERATION_MODEL_ID)
+        #llm = LLMFactory.get_llm(provider=provider)
+        #llm.set_generation_model(settings.GENERATION_MODEL_ID)
 
         # step3: prepare documents for RAG
         documents = []
@@ -142,12 +151,17 @@ class NLPController(BaseController):
         
         full_history = list(chat_history) + messages
 
+        start = time.time()
+
         # step5: generate answer
-        answer = await llm.generate_text(
+        answer = await self.llm_client.generate_text(
             prompt=query,
             documents=documents,
             chat_history=chat_history,
             lang=lang
         )
+
+        end_time = time.time()
+        print(f"Generated answer in {end_time - start} seconds")
 
         return answer, full_history, retrieved_documents
