@@ -3,7 +3,7 @@ from src.helpers.config import get_settings
 
 settings = get_settings()
 
-def get_utils():
+async def get_utils():
         
     db_engine = create_async_engine(settings.POSTGRES_DATABASE_URL, echo=False)
     db_client_sessionmaker = async_sessionmaker(

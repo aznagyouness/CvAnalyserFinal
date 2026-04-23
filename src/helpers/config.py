@@ -12,7 +12,9 @@ class Settings(BaseSettings):
 
     FILE_ALLOWED_TYPES: List[str]
     FILE_MAX_SIZE: int
-    FILE_DEFAULT_CHUNK_SIZE: int
+    FILE_DEFAULT_CHUNK_SIZE_FOR_UPLOAD: int
+    CHUNK_SIZE: int
+    CHUNK_OVERLAP: int
     CELERY_BROKER_URL: str
     CELERY_RESULT_BACKEND_URL: str
     CELERY_TASK_SERIALIZER: str

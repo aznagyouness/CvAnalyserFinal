@@ -7,8 +7,12 @@ APP_AUTHOR_EMAIL =""
 # ========================= General Config =========================
 # ========================= File Config =========================
 FILE_ALLOWED_TYPES=["text/plain", "application/pdf"]
-FILE_MAX_SIZE=100
-FILE_DEFAULT_CHUNK_SIZE=1048576 # 1 MB
+FILE_MAX_SIZE=100 # MB
+FILE_DEFAULT_CHUNK_SIZE_FOR_UPLOAD=1048576 # 1 MB
+
+# ========================= chunk Config =========================
+CHUNK_SIZE=3024 # 1024 characters
+CHUNK_OVERLAP=128 # 128 characters
 
 # ========================= Celery Task Queue Config =========================
 CELERY_BROKER_URL="amqp://minirag_user:minirag_rabbitmq_0000@rabbitmq:5821/minirag_vhost"

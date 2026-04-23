@@ -79,7 +79,7 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
 
         size = 0
         async with aiofiles.open(file_path, "wb") as f:
-            while chunk := await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE):
+            while chunk := await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE_FOR_UPLOAD):
                 size += len(chunk)
                 # Runtime size validation
                 if size > app_settings.FILE_MAX_SIZE * 1048576: # MB to bytes
@@ -152,7 +152,7 @@ async def upload_data(
     """
 
 
-    (db_engine, db_client_sessionmaker) = get_utils()
+    (db_engine, db_client_sessionmaker) = await get_utils()
 
 
     # Instantiate models
@@ -247,7 +247,7 @@ async def process_endpoint( project_id: int, process_request: ProcessRequest):
     overlap_size = process_request.overlap_size
     do_reset = process_request.do_reset
 
-    (db_engine, db_client_sessionmaker) = get_utils()
+    (db_engine, db_client_sessionmaker) = await get_utils()
 
     #instialize object 
     process_controller = ProcessController(str(project_id))
@@ -328,12 +328,17 @@ async def process_endpoint( project_id: int, process_request: ProcessRequest):
             for i, chunk in enumerate(file_chunks)
         ]
 
-        # Insert chunks in batch
-        await chunk_crud.create_chunks_batch(
-            project_id=project_id,
-            asset_id=asset_id,
-            chunks_data=chunks_to_insert
-        )
+        try:
+            # Insert chunks in batch
+            await chunk_crud.create_chunks_batch(
+                project_id=project_id,
+                asset_id=asset_id,
+                chunks_data=chunks_to_insert
+            )
+        except Exception as e:
+            logger.error(f"Error inserting chunks for asset {asset_id} in project {project_id}: {e}")
+            # If one file fails, we continue with the others instead of crashing the whole request
+            continue
 
     return JSONResponse(
         content={
