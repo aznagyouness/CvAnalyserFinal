@@ -25,8 +25,8 @@ class QwenModel(LLMInterface):
         default_input_max_characters: int = 4000,
         default_generation_max_output_tokens: int = 2000,
         default_generation_temperature: float = 0.7,
-        max_requests_per_minute: int = 60,
-        max_concurrent_requests: int = 10
+        max_requests_per_minute: int = settings.MAX_RPM_EMBEDDING,
+        max_concurrent_requests: int = settings.MAX_CONCURRENT_REQUESTS_EMBEDDING
     ):
         """
         Initializes the qwen model with an asynchronous client.

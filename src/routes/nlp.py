@@ -159,6 +159,7 @@ async def search_project(request: Request, project_id: int, search_request: Sear
 
 @nlp_router.post("/answer/{project_id}")
 async def answer_question(request: Request, project_id: int, rag_request: RAGRequest, settings: Settings = Depends(get_settings)):
+
     start_endpoint = time.time()
 
     db_engine = None

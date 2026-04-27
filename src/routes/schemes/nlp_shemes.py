@@ -12,7 +12,7 @@ class SearchRequest(BaseModel):
 
 class RAGRequest(BaseModel):
     query: str
-    limit: Optional[int] = 5
-    provider: Optional[str] = "deepseek"
+    limit: Optional[int] = 50
+    provider: Optional[str] = "qwen"
     lang: Optional[str] = "en"
     chat_history: Optional[List[dict]] = []
