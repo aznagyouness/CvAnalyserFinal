@@ -400,10 +400,15 @@ The most powerful endpoint! It searches Qdrant, builds a prompt, and generates a
   "query": "Does this candidate have experience with Docker?",
   "provider": "qwen",
   "lang": "en",
-  "limit": 5,
-  "chat_history": []
+  "vector_db_limit": 50,
+  "chat_history": [],
+  "use_reranker": true,
+  "reranker_top_n": 5
 }
 ```
+- **Reranking ✨**: You can now enable the **Two-Stage Retrieval** by setting `use_reranker: true`. 
+    1. **Stage 1**: We fetch the top 20 chunks from Qdrant.
+    2. **Stage 2**: **Qwen3-Rerank** evaluates those 20 chunks and picks the best `reranker_top_n` ones for the final answer.
 - **Response**: Returns the `answer` string and the list of `retrieved_documents` used.
 
 ---

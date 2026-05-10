@@ -12,7 +12,9 @@ class SearchRequest(BaseModel):
 
 class RAGRequest(BaseModel):
     query: str
-    limit: Optional[int] = 50
+    vector_db_limit: Optional[int] = 50
     provider: Optional[str] = "qwen"
     lang: Optional[str] = "en"
     chat_history: Optional[List[dict]] = []
+    use_reranker: Optional[bool] = False
+    reranker_top_n: Optional[int] = 5

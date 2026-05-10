@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     QWEN_API_URL: str = None
     MINIMAX_API_KEY: str = None
     MINIMAX_API_URL: str = None
+    QWEN_RERANK_API_KEY: str = None
+    QWEN_RERANK_API_URL: str = None
+    QWEN_RERANK_MODEL_ID: str = "qwen3-rerank"
 
 
 
@@ -47,7 +50,7 @@ class Settings(BaseSettings):
     GENERATION_MODEL_ID: str = None
     EMBEDDING_MODEL_ID: str = None
     EMBEDDING_MODEL_SIZE: int = None
-    INPUT_DAFAULT_MAX_CHARACTERS: int = None
+    MAX_INPUT_TOKENS: int = None
     GENERATION_DAFAULT_MAX_TOKENS: int = None
     GENERATION_DAFAULT_TEMPERATURE: float = None
 

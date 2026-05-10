@@ -116,7 +116,7 @@ async def test_rag_generate(req: RAGGenerateRequest):
         debug_messages = prompt_manager.build_messages(
             query=req.prompt, 
             documents=req.documents,
-            max_input_tokens=8000 
+            max_input_tokens=settings.MAX_INPUT_TOKENS 
         )
         if req.chat_history:
             debug_messages = req.chat_history + debug_messages
