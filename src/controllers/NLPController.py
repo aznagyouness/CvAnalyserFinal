@@ -1,6 +1,7 @@
 from src.controllers.BaseController import BaseController
 from src.models.db_schemes.cv_analysis_db.db_tables import DataChunk, Project
 from src.llm import LLMFactory, LLMProviderEnums, LLMModelEnums
+from src.llm.providers.qwen_rerank import QwenReranker
 from src.llm.templates.rag_prompt import RAGPromptManager
 from src.helpers.config import get_settings
 from typing import List, Optional, Dict, Any
@@ -109,30 +110,68 @@ class NLPController(BaseController):
 
         return results
     
-    async def answer_rag_question(self, project_id: int, query: str, limit: int = 10,
+    async def answer_rag_question(self, project_id: int, query: str, vector_db_limit: int = 50,
                                  provider: str = LLMProviderEnums.QWEN.value,
                                  lang: str = "en",
-                                 chat_history: List[dict] = []):
+                                 chat_history: List[dict] = [],
+                                 use_reranker: bool = False,
+                                 reranker_top_n: int = 5):
         
         start = time.time()
 
-        # step1: retrieve related documents
+        # Step 1: Initial Retrieval
+        # If reranking is enabled, we retrieve more documents initially (e.g., 20)
+        retrieval_limit = vector_db_limit if not use_reranker else max(vector_db_limit, 20)
+        
         retrieved_documents = await self.search_vector_db_collection(
             project_id=project_id,
             text=query,
-            limit=limit,
+            limit=retrieval_limit,
             provider=provider
         )
 
         end_time = time.time()
-        print(f"Retrieved {len(retrieved_documents)} documents in {end_time - start} seconds")
+        self.logger.info(f"Retrieved {len(retrieved_documents)} documents in {end_time - start} seconds")
 
         if not retrieved_documents or len(retrieved_documents) == 0:
             return "I couldn't find any relevant information to answer your question.", [], []
+
+        # Step 1.5: Reranking (Optional) ✨
+        if use_reranker:
+            self.logger.info(f"Reranking {len(retrieved_documents)} documents...")
+            start_rerank = time.time()
+            
+            reranker = QwenReranker()
+            doc_texts = [doc.text for doc in retrieved_documents]
+            
+            try:
+                rerank_results = await reranker.rerank(
+                    query=query,
+                    documents=doc_texts,
+                    top_n=reranker_top_n
+                )
+                
+                # Re-order and filter documents based on rerank results
+                # rerank_results is a list of {index: int, relevance_score: float}
+                reranked_docs = []
+                for res in rerank_results:
+                    idx = res.index if hasattr(res, 'index') else res.get('index')
+                    if idx < len(retrieved_documents):
+                        reranked_docs.append(retrieved_documents[idx])
+                
+                retrieved_documents = reranked_docs
+                self.logger.info(f"Reranked documents in {time.time() - start_rerank} seconds")
+            except Exception as e:
+                self.logger.error(f"Reranking failed, falling back to original retrieval: {str(e)}")
+                # Fallback: just use the first 'limit' documents from original retrieval
+                retrieved_documents = retrieved_documents[:limit]
+        else:
+            # If no reranker, just take the requested limit
+            retrieved_documents = retrieved_documents[:limit]
         
         # step2: get generation client
-        #llm = LLMFactory.get_llm(provider=provider)
-        #llm.set_generation_model(settings.GENERATION_MODEL_ID)
+        # llm = LLMFactory.get_llm(provider=provider)
+        # llm.set_generation_model(settings.GENERATION_MODEL_ID)
 
         # step3: prepare documents for RAG
         documents = []
@@ -146,12 +185,13 @@ class NLPController(BaseController):
         prompt_manager = RAGPromptManager(lang=lang)
         messages = prompt_manager.build_messages(
             query=query,
-            documents=documents
+            documents=documents,
+            max_input_tokens=settings.MAX_INPUT_TOKENS
         )
         
         full_history = list(chat_history) + messages
 
-        start = time.time()
+        start_gen = time.time()
 
         # step5: generate answer
         answer = await self.llm_client.generate_text(
@@ -161,7 +201,6 @@ class NLPController(BaseController):
             lang=lang
         )
 
-        end_time = time.time()
-        print(f"Generated answer in {end_time - start} seconds")
+        self.logger.info(f"Generated answer in {time.time() - start_gen} seconds")
 
         return answer, full_history, retrieved_documents

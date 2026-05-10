@@ -195,10 +195,12 @@ async def answer_question(request: Request, project_id: int, rag_request: RAGReq
         answer, full_history, retrieved_documents = await nlp_controller.answer_rag_question(
             project_id=project_id,
             query=rag_request.query,
-            limit=rag_request.limit,
+            vector_db_limit=rag_request.vector_db_limit,
             provider=rag_request.provider,
             lang=rag_request.lang,
-            chat_history=rag_request.chat_history
+            chat_history=rag_request.chat_history,
+            use_reranker=rag_request.use_reranker,
+            reranker_top_n=rag_request.reranker_top_n
         )
         end_time = time.time()
         logger.info(f"Answered question with answer_rag_question in {end_time - start} seconds")

@@ -89,7 +89,7 @@ class RAGPromptManager:
         self,
         query: str,
         documents: List[Dict[str, Any]],
-        max_input_tokens: int = 4000
+        max_input_tokens: int = None
     ) -> List[Dict[str, str]]:
         """
         Constructs a message list for ChatCompletion.

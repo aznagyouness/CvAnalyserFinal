@@ -38,6 +38,8 @@ class LLMFactory:
             return DeepSeekModel(
                 api_key=api_key if api_key else settings.DEEPSEEK_API_KEY,
                 api_url=api_url if api_url else settings.DEEPSEEK_API_URL,
+                default_generation_max_output_tokens=settings.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=settings.GENERATION_DAFAULT_TEMPERATURE,
                 **kwargs
             )
         
@@ -45,6 +47,8 @@ class LLMFactory:
             return QwenModel(
                 api_key=api_key if api_key else settings.QWEN_API_KEY,
                 api_url=api_url if api_url else settings.QWEN_API_URL,
+                default_generation_max_output_tokens=settings.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=settings.GENERATION_DAFAULT_TEMPERATURE,
                 **kwargs
             )
         
@@ -52,6 +56,8 @@ class LLMFactory:
             return MinimaxModel(
                 api_key=api_key if api_key else settings.MINIMAX_API_KEY,
                 api_url=api_url if api_url else settings.MINIMAX_API_URL,
+                default_generation_max_output_tokens=settings.GENERATION_DAFAULT_MAX_TOKENS,
+                default_generation_temperature=settings.GENERATION_DAFAULT_TEMPERATURE,
                 **kwargs
             )
         

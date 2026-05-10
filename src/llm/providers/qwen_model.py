@@ -22,7 +22,6 @@ class QwenModel(LLMInterface):
         self, 
         api_key: Optional[str] = None, 
         api_url: Optional[str] = None,
-        default_input_max_characters: int = 4000,
         default_generation_max_output_tokens: int = 2000,
         default_generation_temperature: float = 0.7,
         max_requests_per_minute: int = settings.MAX_RPM_EMBEDDING,
@@ -34,7 +33,6 @@ class QwenModel(LLMInterface):
         self.api_key = api_key if api_key else settings.QWEN_API_KEY
         self.api_url = api_url if api_url else settings.QWEN_API_URL
 
-        self.default_input_max_characters = default_input_max_characters
         self.default_generation_max_output_tokens = default_generation_max_output_tokens
         self.default_generation_temperature = default_generation_temperature
 
@@ -62,10 +60,6 @@ class QwenModel(LLMInterface):
     def set_embedding_model(self, model_id: str, embedding_size: int):
         self.embedding_model_id = model_id
         self.embedding_size = embedding_size
-
-    def _process_text(self, text: str) -> str:
-        """Truncates and cleans the input text."""
-        return text[:self.default_input_max_characters].strip()
 
     async def generate_text(
         self, 
@@ -99,7 +93,7 @@ class QwenModel(LLMInterface):
             messages = prompt_manager.build_messages(
                 query=prompt, 
                 documents=documents,
-                max_input_tokens=8000 
+                max_input_tokens=settings.MAX_INPUT_TOKENS 
             )
             if chat_history:
                 messages = chat_history + messages

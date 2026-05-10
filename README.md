@@ -10,24 +10,27 @@ An intelligent, enterprise-grade platform for analyzing and processing CVs using
 - **Dual-Database Architecture**: 
   - **PostgreSQL**: Relational metadata, project management, and tracking.
   - **Qdrant**: High-speed semantic search and vector retrieval via gRPC (6334) and REST (6333).
-- **RAG (Retrieval-Augmented Generation)**: AI-powered question answering using top-tier LLMs (Qwen, DeepSeek, Minimax).
+- **Two-Stage RAG Pipeline**: 
+  - **Stage 1 (Retrieval)**: Fast semantic search in Qdrant.
+  - **Stage 2 (Reranking) ✨**: Precision sorting using **Qwen3-Rerank** to provide the highest quality context to the LLM.
+- **Multilingual Support 🌍**: YAML-based prompt templates for **English**, **Arabic**, and **French**, ensuring high-quality, localized AI responses.
+- **Modular AI Architecture**: Pluggable provider system (Qwen, DeepSeek, Minimax) managed via a unified **LLMFactory**.
 - **Enterprise-Grade Performance**:
-  - **Resilient Embeddings**: High-throughput embedding system with `aiolimiter` (RPM control), `asyncio.Semaphore` (concurrency), and exponential backoff retries.
-  - **SQL Batching**: Optimized multi-row insertions for chunks and assets.
-  - **Automatic Batching**: Transparently handles LLM provider limits (e.g., Qwen's 10-item limit).
-- **Async Workflow**: Fully asynchronous architecture from API to Database to Background Tasks.
-- **Scalable Monitoring**: Integrated with Prometheus, Grafana, and Flower for worker observability.
+  - **Resilient Embeddings**: High-throughput system with `aiolimiter` (RPM control), `asyncio.Semaphore` (concurrency), and exponential backoff retries.
+  - **SQL & Vector Batching**: Optimized multi-row insertions and provider-specific batching (e.g., Qwen's 10-item limit).
+- **Safety & Cost Control 🛡️**: Global limits for character input, generation tokens, and hallucination control (temperature).
+- **Scalable Monitoring**: Full observability stack with Prometheus, Grafana, Node Exporter, and Postgres Exporter.
 
 ---
 
 ## 🛠 Tech Stack
 
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) (Async Python 3.10+)
-- **Vector DB**: [Qdrant](https://qdrant.tech/) (High-performance search)
+- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) (Async Python 3.11+)
+- **Vector DB**: [Qdrant](https://qdrant.tech/) (v1.17.0)
 - **Relational DB**: [PostgreSQL](https://www.postgresql.org/) (with [pgvector](https://github.com/pgvector/pgvector))
-- **LLM Integration**: [LangChain](https://www.langchain.com/) & Native Provider SDKs (OpenAI-compatible)
+- **LLM Providers**: Qwen (DashScope), DeepSeek, Minimax.
 - **Task Queue**: [Celery](https://docs.celeryq.dev/) (with [RabbitMQ](https://www.rabbitmq.com/) & [Redis](https://redis.io/))
-- **Migrations**: [Alembic](https://alembic.sqlalchemy.org/)
+- **Monitoring**: Prometheus, Grafana, Node Exporter, Postgres Exporter.
 - **Infrastructure**: [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 
 ---
@@ -37,18 +40,20 @@ An intelligent, enterprise-grade platform for analyzing and processing CVs using
 ### 1. Setup Environment
 Clone the repository and configure your environment:
 ```bash
-cp .env.example .env
+cp .env.example .env.dev
 ```
-Key variables to configure:
-- `QWEN_API_KEY`: Your DashScope/Qwen API key.
-- `POSTGRES_URL`: `postgresql+asyncpg://user:pass@localhost:5432/cv_db`
-- `QDRANT_URL`: `http://localhost:6333`
+Key variables to configure in `.env.dev`:
+- `QWEN_API_KEY`: Your DashScope API key.
+- `QWEN_RERANK_API_KEY`: API key for reranking support.
+- `POSTGRES_DATABASE_URL`: `postgresql+asyncpg://user:pass@localhost:5432/cv_db`
+- `VECTOR_DB_URL`: `http://localhost:6333`
 
 ### 2. Start Infrastructure
-Launch the full stack (Postgres, Qdrant, Redis, RabbitMQ, Prometheus, Grafana):
+Launch the full production-ready stack:
 ```bash
 docker-compose up -d
 ```
+> **Teacher's Note**: Our `docker-compose` includes built-in healthchecks to ensure the database is ready before the app starts!
 
 ### 3. Initialize Database
 Run migrations to create your SQL schema:
@@ -62,31 +67,27 @@ alembic upgrade head
 
 ---
 
-## 🚀 API Quick Start
+## 🚀 API Quick Start (Production Routes)
 
-### 1. Upload CVs
-`POST /api/v1/data/upload/{project_id}`
-- Upload multiple PDF/TXT files to a specific project.
+### 1. Indexing a Project
+`POST /api/v1/nlp/index/push/{project_id}`
+- Synchronizes CV chunks from SQL to the Vector Database.
 
-### 2. Process & Index
-`POST /api/v1/data/process/{project_id}`
-- Chunks the files, generates embeddings, and pushes to Qdrant.
-```json
-{
-  "chunk_size": 1000,
-  "overlap_size": 200,
-  "do_reset": true
-}
-```
+### 2. Semantic Search
+`POST /api/v1/nlp/search/{project_id}`
+- Pure retrieval to find relevant CV parts without AI generation.
 
-### 3. Ask Questions (RAG)
+### 3. Full RAG Pipeline (Ask Questions)
 `POST /api/v1/nlp/answer/{project_id}`
-- Semantic search across CVs followed by LLM generation.
+- The complete pipeline: Search ➔ Rerank ➔ Template ➔ AI Answer.
 ```json
 {
-  "query": "What are the candidate's main skills in Python?",
+  "query": "What is the candidate's experience with Docker?",
+  "provider": "qwen",
   "lang": "en",
-  "limit": 5
+  "use_reranker": true,
+  "vector_db_limit": 20,
+  "reranker_top_n": 5
 }
 ```
 
@@ -94,25 +95,25 @@ alembic upgrade head
 
 ## 📚 Documentation & Guides
 
-- **[QDRANT_GUIDE.md](./QDRANT_GUIDE.md)**: Master the vector database, batching, and semantic search.
-- **[ALEMBIC_GUIDE.md](./ALEMBIC_GUIDE.md)**: Learn how to manage database migrations.
+- **[QDRANT_GUIDE.md](./QDRANT_GUIDE.md)**: Deep dive into the Vector DB, RAG pipeline, and Postman examples.
+- **[ALEMBIC_GUIDE.md](./ALEMBIC_GUIDE.md)**: Managing SQL database migrations.
 
 ---
 
 ## 📂 Core Architecture
 
-- **`src/controllers/`**: Business logic layer (Process, NLP, Project).
-- **`src/vectordb/`**: Multi-provider vector database layer (Qdrant, PGVector).
-- **`src/llm/`**: Pluggable LLM provider system (Qwen, DeepSeek, Minimax).
-- **`src/models/`**: SQLAlchemy schemas and CRUD operations.
-- **`src/routes/`**: FastAPI endpoints organized by domain.
+- **`src/llm/`**: The "AI Engine" containing providers (Qwen, DeepSeek, Minimax), the reranker, and YAML templates.
+- **`src/controllers/`**: Business logic layer coordinating between data and AI services.
+- **`src/vectordb/`**: Multi-provider vector database layer.
+- **`src/models/`**: SQL (SQLAlchemy) and Pydantic schemas.
+- **`src/routes/`**: FastAPI endpoints organized by Production and Debugging categories.
 
 ---
 
 ## 📊 Monitoring & Observability
-- **API Metrics**: `/metrics` (Prometheus format).
-- **Celery Worker**: Flower dashboard on `http://localhost:5555`.
-- **Grafana**: Pre-configured dashboards for system health.
+- **Prometheus**: Metrics collection on `http://localhost:9090`.
+- **Grafana**: Pre-configured dashboards on `http://localhost:3000`.
+- **Flower**: Celery worker monitoring on `http://localhost:5555`.
 
 ---
 
