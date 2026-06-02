@@ -31,6 +31,20 @@ class LLMInterface(ABC):
         """Asynchronously generates text based on a prompt, optional chat history and RAG documents."""
         pass
 
+    @abstractmethod
+    async def generate_text_stream(
+        self, 
+        prompt: str, 
+        chat_history: List[dict] = [], 
+        documents: Optional[List[dict]] = None,
+        lang: str = "en",
+        max_output_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs
+    ):
+        """Asynchronously generates a stream of text based on a prompt, optional chat history and RAG documents."""
+        pass
+
 
 
     @abstractmethod

@@ -135,11 +135,11 @@ async def process_single_file(file: UploadFile, project_id: int, project, asset_
 
 
 @data_router.post("/upload/{project_id}")
-async def upload_data(
+async def upload_files(
     request: Request, 
     project_id: int, 
     files: List[UploadFile] = File(..., description="List of files to upload"),
-    app_settings: Settings = Depends(get_settings)
+    settings: Settings = Depends(get_settings)
 ):
     """
     Upload multiple files concurrently for a specific project.
@@ -151,83 +151,90 @@ async def upload_data(
     - Supports multi-status responses for partial successes
     """
 
+    vdb_client = None
+    try:
+        # Optimized: Use sessionmaker from app.state
+        db_client_sessionmaker = request.app.state.db_session_factory
 
 
-    (db_engine, db_client_sessionmaker) = await get_utils()
+        # Instantiate models
+        project_crud = ProjectCrud(db_client=db_client_sessionmaker)
+        asset_crud = AssetCrud(db_client=db_client_sessionmaker)
 
+        # Verify project exists
+        project = await project_crud.get_project_or_create_one(project_id=project_id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found"
+            )
 
-    # Instantiate models
-    project_crud = ProjectCrud(db_client=db_client_sessionmaker)
-   
-    asset_crud = AssetCrud(db_client=db_client_sessionmaker)
+        # Initialize controllers
+        data_controller = DataController()
+        project_controller = ProjectController()
+        
+        # Ensure project directory exists
+        project_dir_path = project_controller.get_project_path(project_id=str(project_id))
+        Path(project_dir_path).mkdir(parents=True, exist_ok=True)
 
-    # Verify project exists
-    project = await project_crud.get_project_or_create_one(project_id=project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found"
-        )
-
-    # Initialize controllers
-    data_controller = DataController()
-    project_controller = ProjectController()
+        # Process files concurrently
+        tasks = [
+            process_single_file(
+                file=file,
+                project_id=project_id,
+                project=project,
+                asset_crud=asset_crud,
+                data_controller=data_controller,
+                app_settings=settings
+            )
+            for file in files
+        ]
     
-    # Ensure project directory exists
-    project_dir_path = project_controller.get_project_path(project_id=str(project_id))
-    Path(project_dir_path).mkdir(parents=True, exist_ok=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results and handle exceptions
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Task exception for {files[i].filename}: {result}")
+                processed_results.append({
+                    "filename": files[i].filename,
+                    "success": False,
+                    "error": str(result),
+                    "file_name": None,
+                    "asset_id": None
+                })
+            else:
+                processed_results.append(result)
 
-    # Process files concurrently
-    tasks = [
-        process_single_file(
-            file=file,
-            project_id=project_id,
-            project=project,
-            asset_crud=asset_crud,
-            data_controller=data_controller,
-            app_settings=app_settings
-        )
-        for file in files
-    ]
-    
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Process results and handle exceptions
-    processed_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            logger.error(f"Task exception for {files[i].filename}: {result}")
-            processed_results.append({
-                "filename": files[i].filename,
-                "success": False,
-                "error": str(result),
-                "file_name": None,
-                "asset_id": None
-            })
+        # Summary statistics
+        uploaded_count = sum(1 for r in processed_results if r['success'])
+        failed_count = len(processed_results) - uploaded_count
+        db_inserted_count = sum(1 for r in processed_results if r['success'] and r['asset_id'])
+
+        response_content = {
+            "signal": ResponseSignal.FILE_UPLOAD_SUCCESS.value if uploaded_count > 0 else ResponseSignal.FILE_UPLOAD_FAILED.value,
+            "uploaded_files": uploaded_count,
+            "non_uploaded_files": failed_count,
+            "inserted_files_db": db_inserted_count,
+            "non_inserted_files_db": uploaded_count - db_inserted_count,
+            "details": processed_results,
+        }
+
+        # Determine status code
+        if uploaded_count == len(processed_results):
+            return JSONResponse(status_code=status.HTTP_200_OK, content=response_content)
+        elif uploaded_count == 0:
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=response_content)
         else:
-            processed_results.append(result)
-
-    # Summary statistics
-    uploaded_count = sum(1 for r in processed_results if r['success'])
-    failed_count = len(processed_results) - uploaded_count
-    db_inserted_count = sum(1 for r in processed_results if r['success'] and r['asset_id'])
-
-    response_content = {
-        "signal": ResponseSignal.FILE_UPLOAD_SUCCESS.value if uploaded_count > 0 else ResponseSignal.FILE_UPLOAD_FAILED.value,
-        "uploaded_files": uploaded_count,
-        "non_uploaded_files": failed_count,
-        "inserted_files_db": db_inserted_count,
-        "non_inserted_files_db": uploaded_count - db_inserted_count,
-        "details": processed_results,
-    }
-
-    # Determine status code
-    if uploaded_count == len(processed_results):
-        return JSONResponse(status_code=status.HTTP_200_OK, content=response_content)
-    elif uploaded_count == 0:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=response_content)
-    else:
-        return JSONResponse(status_code=status.HTTP_207_MULTI_STATUS, content=response_content)
+            return JSONResponse(status_code=status.HTTP_207_MULTI_STATUS, content=response_content)
+    
+    except Exception as e:
+        logger.error(f"Error uploading files for project {project_id}: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"signal": ResponseSignal.FILE_UPLOAD_FAILED.value, "detail": str(e)}
+        )
 
 
 #------------------
@@ -235,117 +242,116 @@ async def upload_data(
 #------------------
 
 @data_router.post("/process/{project_id}")
-async def process_endpoint( project_id: int, process_request: ProcessRequest):
+async def process_endpoint(request: Request, project_id: int, process_request: ProcessRequest):
     """
     Process endpoint for a specific project.
     - split all project files into chunks or single file if file_name is provided
     - input : {project_id, file_name, chunk_size, overlap_size, do_reset}
     """
+    try:
+        # Optimized: Use sessionmaker from app.state
+        db_client_sessionmaker = request.app.state.db_session_factory
+        
+        # Initialize variables
+        file_name = process_request.file_name
+        chunk_size = process_request.chunk_size
+        overlap_size = process_request.overlap_size
+        do_reset = process_request.do_reset
 
-    #get variables : 
-    file_name = process_request.file_name
-    chunk_size = process_request.chunk_size
-    overlap_size = process_request.overlap_size
-    do_reset = process_request.do_reset
+        # Initialize controllers and CRUDs
+        process_controller = ProcessController(db_client=db_client_sessionmaker)
+        asset_crud = AssetCrud(db_client=db_client_sessionmaker)
+        chunk_crud = DataChunkCrud(db_client=db_client_sessionmaker)
 
-    (db_engine, db_client_sessionmaker) = await get_utils()
+        #----------------------------------------logic-------------------------------------------------
 
-    #instialize object 
-    process_controller = ProcessController(str(project_id))
+        project_files_ids = {}
 
-    asset_crud = AssetCrud(db_client= db_client_sessionmaker)
-    chunk_crud = DataChunkCrud(db_client= db_client_sessionmaker)
+        # delete all chunks in our DB  :
+        if do_reset:
+            _ = await chunk_crud.delete_chunks_by_project(project_id=project_id)
 
-
-    #----------------------------------------logic-------------------------------------------------
-
-    project_files_ids = {}
-
-    # delete all chunks in our DB  :
-    if do_reset:
-        _ = await chunk_crud.delete_chunks_by_project(project_id=project_id)
-
-
-    # 	If a file_name is provided, it fetches that single asset record from the database
-    if file_name:
-        asset_record = await asset_crud.get_asset_by_name(
-            asset_name=file_name,
-            project_id=project_id
-        )
-
-        if asset_record is None:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "signal": ResponseSignal.FILE_NAME_ERROR.value,
-                }
+        # If a file_name is provided, it fetches that single asset record from the database
+        if file_name:
+            asset_record = await asset_crud.get_asset_by_name(
+                asset_name=file_name,
+                project_id=project_id
             )
 
-        project_files_ids = {asset_record.asset_name: asset_record.asset_id}
-        
-    # get all assets in table Asset for project_id
-    else:
-        
-        project_files = await asset_crud.get_assets_by_project(
-            project_id=project_id
-        )
+            if asset_record is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={
+                        "signal": ResponseSignal.FILE_NAME_ERROR.value,
+                    }
+                )
 
-        project_files_ids = {record.asset_name: record.asset_id for record in project_files}
-
-    no_files_to_process = len(project_files_ids)
-
-    # For each file, it loads the file content, splits it into chunks, and inserts the chunks into the database
-    no_chunks = 0
-    no_files_processed = 0
-    for file_name, asset_id in project_files_ids.items():
-        file_content = process_controller.load_documents(file_name)
-
-        if file_content is None:
-            no_files_processed += 1
-            continue
-
-        file_chunks = process_controller.split_documents(file_content, chunk_size, overlap_size)
-
-        # file_chunks is None : no object returned from split_documents
-        # len(file_chunks) == 0 : list of chunks is empty  ==> object created but no chunks
-        if file_chunks is None or len(file_chunks) == 0:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "signal": ResponseSignal.PROCESSING_FAILED.value,
-                }
-            )
+            project_files_ids = {asset_record.asset_name: asset_record.asset_id}
             
-        no_chunks += len(file_chunks) 
-        no_files_processed += 1
-
-        # Prepare batch insertion
-        chunks_to_insert = [
-            {
-                "text": chunk.page_content,
-                "order": i + 1,
-                "metadata": chunk.metadata
-            }
-            for i, chunk in enumerate(file_chunks)
-        ]
-
-        try:
-            # Insert chunks in batch
-            await chunk_crud.create_chunks_batch(
-                project_id=project_id,
-                asset_id=asset_id,
-                chunks_data=chunks_to_insert
+        # get all assets in table Asset for project_id
+        else:
+            project_files = await asset_crud.get_assets_by_project(
+                project_id=project_id
             )
-        except Exception as e:
-            logger.error(f"Error inserting chunks for asset {asset_id} in project {project_id}: {e}")
-            # If one file fails, we continue with the others instead of crashing the whole request
-            continue
+            project_files_ids = {record.asset_name: record.asset_id for record in project_files}
 
-    return JSONResponse(
-        content={
-            "signal": ResponseSignal.PROCESSING_SUCCESS.value,
-            "inserted_chunks": no_chunks,
-            "processed_files": no_files_processed,
-            "total_files": no_files_to_process,
-        }
-    )
+        no_files_to_process = len(project_files_ids)
+
+        # For each file, it loads the file content, splits it into chunks, and inserts the chunks into the database
+        no_chunks = 0
+        no_files_processed = 0
+        for file_name, asset_id in project_files_ids.items():
+            file_content = process_controller.load_documents(file_name)
+
+            if file_content is None:
+                no_files_processed += 1
+                continue
+
+            file_chunks = process_controller.split_documents(file_content, chunk_size, overlap_size)
+
+            if file_chunks is None or len(file_chunks) == 0:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={
+                        "signal": ResponseSignal.PROCESSING_FAILED.value,
+                    }
+                )
+                
+            no_chunks += len(file_chunks) 
+            no_files_processed += 1
+
+            # Prepare batch insertion
+            chunks_to_insert = [
+                {
+                    "text": chunk.page_content,
+                    "order": i + 1,
+                    "metadata": chunk.metadata
+                }
+                for i, chunk in enumerate(file_chunks)
+            ]
+
+            try:
+                # Insert chunks in batch
+                await chunk_crud.create_chunks_batch(
+                    project_id=project_id,
+                    asset_id=asset_id,
+                    chunks_data=chunks_to_insert
+                )
+            except Exception as e:
+                logger.error(f"Error inserting chunks for asset {asset_id} in project {project_id}: {e}")
+                continue
+
+        return JSONResponse(
+            content={
+                "signal": ResponseSignal.PROCESSING_SUCCESS.value,
+                "inserted_chunks": no_chunks,
+                "processed_files": no_files_processed,
+                "total_files": no_files_to_process,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error processing project {project_id}: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"signal": ResponseSignal.PROCESSING_FAILED.value, "detail": str(e)}
+        )

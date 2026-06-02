@@ -3,6 +3,16 @@ from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
 
+"""
+Main Purpose :
+
+Adds automatic monitoring of HTTP requests to a FastAPI app, tracking:
+
+- Request count (total requests with method, endpoint, and status code)
+
+- Request latency (how long each request takes)
+"""
+
 # Define metrics
 REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP Requests', ['method', 'endpoint', 'status'])
 REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP Request Latency', ['method', 'endpoint'])

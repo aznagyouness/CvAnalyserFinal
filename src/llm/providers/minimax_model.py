@@ -107,6 +107,60 @@ class MinimaxModel(LLMInterface):
             self.logger.error(f"Error during Minimax text generation: {str(e)}")
             raise e
 
+    async def generate_text_stream(
+        self, 
+        prompt: str, 
+        chat_history: List[dict] = [], 
+        documents: Optional[List[Dict[str, Any]]] = None,
+        lang: str = "en",
+        max_output_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        **kwargs
+    ):
+        """
+        Asynchronously generates a stream of responses from Minimax.
+        If documents are provided, it builds a RAG-optimized prompt.
+        """
+        if not self.generation_model_id:
+            self.logger.error("Generation model ID was not set.")
+            yield "[ERROR: Generation model ID not set]"
+            return
+
+        max_tokens = max_output_tokens or self.default_generation_max_output_tokens
+        temp = temperature or self.default_generation_temperature
+
+        # Prepare messages
+        if documents:
+            prompt_manager = RAGPromptManager(lang=lang)
+            messages = prompt_manager.build_messages(
+                query=prompt, 
+                documents=documents,
+                max_input_tokens=settings.MAX_INPUT_TOKENS 
+            )
+            if chat_history:
+                messages = chat_history + messages
+        else:
+            messages = list(chat_history)
+            messages.append(self.construct_prompt(prompt=prompt, role=LLMRoleEnums.USER.value))
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temp,
+                stream=True,
+                **kwargs
+            )
+
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            self.logger.error(f"Error during Minimax streaming generation: {str(e)}")
+            yield f"\n[STREAM_ERROR: {str(e)}]"
+
     async def embed_text(self, text: Union[str, List[str]], **kwargs) -> Union[List[float], List[List[float]]]:
         """
         Asynchronously generates embeddings using Minimax.

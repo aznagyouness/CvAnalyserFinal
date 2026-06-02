@@ -6,7 +6,6 @@ from src.models.crud.DataChunkCrud import DataChunkCrud
 from src.controllers.NLPController import NLPController
 from src.models.enums.ResponseEnums import ResponseSignal
 from src.helpers.config import get_settings, Settings
-from src.database import get_utils
 from src.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from tqdm.auto import tqdm
 import logging
@@ -22,10 +21,11 @@ nlp_router = APIRouter(
 
 @nlp_router.post("/index/push/{project_id}")
 async def index_project(request: Request, project_id: int, push_request: PushRequest, settings: Settings = Depends(get_settings)):
-    db_engine = None
     vdb_client = None
     try:
-        (db_engine, db_client_sessionmaker) = await get_utils()
+        # Optimized: Use sessionmaker from app.state initialized in main.py
+        db_client_sessionmaker = request.app.state.db_session_factory
+        
         project_crud = ProjectCrud(db_client=db_client_sessionmaker)
         chunk_crud = DataChunkCrud(db_client=db_client_sessionmaker)
 
@@ -91,16 +91,16 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
     finally:
         if vdb_client : 
             await vdb_client.disconnect()
-        if db_engine : 
-            await db_engine.dispose()
 
 
 @nlp_router.post("/search/{project_id}")
 async def search_project(request: Request, project_id: int, search_request: SearchRequest, settings: Settings = Depends(get_settings)):
-    db_engine = None
     vdb_client = None
     try:
-        (db_engine, db_client_sessionmaker) = await get_utils()
+        # Optimized: Use sessionmaker from app.state
+        db_client_sessionmaker = request.app.state.db_session_factory
+        
+        # Initialize VectorDB
         vdb_factory = VectorDBProviderFactory(config=settings, db_client=db_client_sessionmaker)
         vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)
         await vdb_client.connect()
@@ -151,46 +151,33 @@ async def search_project(request: Request, project_id: int, search_request: Sear
     finally:
         if vdb_client : 
             await vdb_client.disconnect()
-        if db_engine : 
-            await db_engine.dispose()
 
 
 
 
 @nlp_router.post("/answer/{project_id}")
 async def answer_question(request: Request, project_id: int, rag_request: RAGRequest, settings: Settings = Depends(get_settings)):
-
-    start_endpoint = time.time()
-
-    db_engine = None
     vdb_client = None
     try:
-        start = time.time()
-        (db_engine, db_client_sessionmaker) = await get_utils()
+        # Optimized: Use sessionmaker from app.state
+        db_client_sessionmaker = request.app.state.db_session_factory
+        
+        # Initialize VectorDB
         vdb_factory = VectorDBProviderFactory(config=settings, db_client=db_client_sessionmaker)
         vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)
         await vdb_client.connect()
-        end_time = time.time()
-        logger.info(f"Connected to VectorDB in {end_time - start} seconds")
-        
-        start = time.time()
-        
-        llm = LLMFactory.get_llm(provider=rag_request.provider)
 
+        llm = LLMFactory.get_llm(provider=rag_request.provider)
         nlp_controller = NLPController(vectordb_client=vdb_client,llm_client=llm)
         nlp_controller.set_project_id(project_id=str(project_id))
-        
-        nlp_controller.llm_client.set_embedding_model(settings.EMBEDDING_MODEL_ID, settings.EMBEDDING_MODEL_SIZE)
-        
-        end_time = time.time()
-        logger.info(f"Set embedding model in {end_time - start} seconds")
 
-        start = time.time()
+        # Initialize the embedding model before answering
+        nlp_controller.llm_client.set_embedding_model(
+            settings.EMBEDDING_MODEL_ID, 
+            settings.EMBEDDING_MODEL_SIZE
+        )
+
         nlp_controller.llm_client.set_generation_model(settings.GENERATION_MODEL_ID)
-        end_time = time.time()
-        logger.info(f"Set generation model in {end_time - start} seconds")
-        
-        start = time.time()
 
         answer, full_history, retrieved_documents = await nlp_controller.answer_rag_question(
             project_id=project_id,
@@ -202,8 +189,6 @@ async def answer_question(request: Request, project_id: int, rag_request: RAGReq
             use_reranker=rag_request.use_reranker,
             reranker_top_n=rag_request.reranker_top_n
         )
-        end_time = time.time()
-        logger.info(f"Answered question with answer_rag_question in {end_time - start} seconds")
 
         return JSONResponse(
             content={
@@ -224,14 +209,10 @@ async def answer_question(request: Request, project_id: int, rag_request: RAGReq
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value, "detail": str(e)}
         )
+    
     finally:
         if vdb_client : 
             await vdb_client.disconnect()
-        if db_engine : 
-            await db_engine.dispose()
-    
-        end_endpoint = time.time()
-        logger.info(f"Endpoint processed in {end_endpoint - start_endpoint} seconds")
 
 
 
