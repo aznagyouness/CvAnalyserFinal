@@ -1,7 +1,6 @@
 import datetime
 from fastapi import FastAPI, APIRouter, Depends, UploadFile, status, Request
 from fastapi.responses import JSONResponse
-from src.database import get_utils
 from src.helpers.config import get_settings
 from src.tasks.test_task import test_sum
 
@@ -21,8 +20,9 @@ def test_fastapi():
 
 
 @data_router.get("/welcome_postgres")
-async def test_postgres():    
-    (db_engine, db_client_sessionmaker) = await get_utils()   
+async def test_postgres(request: Request):    
+    db_engine = request.app.state.db_engine
+    db_client_sessionmaker = request.app.state.db_session_factory
     return {
         "message ": "Postgres Docker connection successful!",
         "db_engine": str(db_engine),
@@ -84,9 +84,10 @@ vectordb_client = QdrantClient(
     collection_name=settings.VECTOR_DB_COLLECTION_NAME,
 ) """
 
-@data_router.get("/welcome_vectordb")
-async def test_vector_db():    
-    (db_engine, db_client_sessionmaker) = await get_utils()   
+@data_router.get("/welcome_vectordb_db_check")
+async def test_vector_db_db_check(request: Request):    
+    db_engine = request.app.state.db_engine
+    db_client_sessionmaker = request.app.state.db_session_factory
     return {
         "message ": "VectorDBProvider connection successful!",
         "db_engine": str(db_engine),
