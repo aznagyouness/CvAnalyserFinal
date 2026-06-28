@@ -1,4 +1,4 @@
-
+from __future__ import annotations
 from src.models.db_schemes.cv_analysis_db.base import BaseTable
 
 import uuid
@@ -19,8 +19,51 @@ Full Relationships :
 - Asset ↔ DataChunk (One-to-Many)
 
 """
+#-------- idempotency table --------------------------------------------------------------------
+# src/models/db_schemes/minirag/schemes/taskiq_task_execution.py
 
 
+from datetime import datetime, timezone
+from typing import Optional, Any
+
+from sqlalchemy import BigInteger, DateTime, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
+
+
+
+class TaskiqTaskExecution(BaseTable):
+    __tablename__ = "taskiq_task_executions"
+
+    # Modern SQLAlchemy 2.0 syntax using Mapped and mapped_column
+    execution_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    taskiq_task_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    task_args_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    
+    # For JSON columns, we use dict/Any for type hinting
+    task_args: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="RUNNING")
+    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), 
+        nullable=False, 
+        default=lambda: datetime.now(timezone.utc)
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_tte_hash_status", "task_args_hash", "status"),
+        Index("ix_tte_name_enqueued", "task_name", "enqueued_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TaskiqTaskExecution id={self.execution_id} "
+            f"task={self.task_name} status={self.status}>"
+        )
 
 #---------------- project table -----------------------------------------------------------------
 

@@ -107,3 +107,63 @@ def test_celery():
         "message ": "Welcome to celery : you are connected with redis & RabbitMQ!",
         "test_task_id": result.id
         }
+
+
+from src.tasks.test_taskiq import my_task
+from taskiq.exceptions import SendTaskError 
+import traceback
+
+@data_router.get("/welcome_taskiq")
+async def test_taskiq():
+    try:
+        await my_task.kiq()
+        return JSONResponse(content={"message": "Task queued!"})
+    except SendTaskError as e:
+        # Print the full chain of exceptions
+        print("SendTaskError caught!")
+        print(f"Message: {e}")
+        print(f"Cause: {e.__cause__}")
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "cause": str(e.__cause__)}
+        )
+from pydantic import BaseModel
+from src.tasks.test_taskiq import my_task2
+from fastapi import APIRouter, Body
+from fastapi.responses import JSONResponse
+from taskiq.exceptions import SendTaskError
+import traceback
+
+
+class WelcomeRequest(BaseModel):
+    name: str
+
+@data_router.post("/welcome_taskiq2")
+async def test_taskiq2(request: WelcomeRequest):
+    task = await my_task2.kiq(request.name)
+    return {"task_id": task.task_id, "status": "queued"}
+
+@data_router.get("/task-result/{task_id}")
+async def get_task_result(task_id: str):
+    """Check the result of a queued task."""
+    from src.tk_broker import broker
+    
+    result = await broker.result_backend.get_result(task_id)
+    
+    if result is None:
+        return {"status": "pending", "task_id": task_id}
+    
+    if result.is_err:
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "error": str(result.error)
+        }
+    
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "result": result.return_value,
+        "execution_time": result.execution_time
+    }

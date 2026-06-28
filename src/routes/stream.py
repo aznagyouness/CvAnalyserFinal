@@ -32,6 +32,11 @@ async def answer_question_stream(
     # Optimized: Use sessionmaker from app.state initialized in main.py
     db_client_sessionmaker = request.app.state.db_session_factory
     
+    # --- LAYER 1: THE SHIELD (Hybrid Strategy) ---
+    # Use the global generation quota manager from app.state
+    quota_manager = request.app.state.generation_quota
+    await quota_manager.wait_for_slot()
+    
     # Initialize VectorDB
     vdb_factory = VectorDBProviderFactory(config=settings, db_client=db_client_sessionmaker)
     vdb_client = vdb_factory.create(provider=settings.VECTOR_DB_BACKEND)

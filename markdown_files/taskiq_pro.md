@@ -8,9 +8,20 @@ Welcome to the definitive guide for building resilient, high-performance asynchr
 
 To implement the professional patterns in this guide, you will need the following ecosystem libraries:
 
+### 🎯 The Rule
+
+| Type | Syntax | Example |
+|------|--------|---------|
+| **Taskiq extras** (bundled) | `taskiq[extra]` | `taskiq[metrics,orjson]` |
+| **Taskiq plugins** (separate) | `package-name` | `taskiq-dashboard` |
+| **Taskiq brokers** (separate) | `package-name` | `taskiq-aio-pika` |
+
+**Bottom line**: Only `metrics`, `orjson`, `uv`, `all`, `reload`, and `zmq` go inside the brackets. Everything else is a separate `pip install`.
+
+
 ### **Core & Infrastructure**
 ```bash
-pip install taskiq==0.12.4           # The core library
+pip install taskiq[metrics]==0.12.4  # The core library + built-in Prometheus support
 pip install taskiq-aio-pika          # RabbitMQ Broker (Async)
 pip install taskiq-redis             # Redis Result Backend & Broker
 ```
@@ -18,7 +29,6 @@ pip install taskiq-redis             # Redis Result Backend & Broker
 ### **Integrations**
 ```bash
 pip install taskiq-fastapi           # FastAPI Dependency Injection support
-pip install taskiq-prometheus        # Metrics for Grafana
 pip install taskiq-dashboard         # Web UI for monitoring
 ```
 
@@ -90,16 +100,193 @@ Define your broker and result backend here. This file is imported by both the AP
 ```python
 from taskiq_aio_pika import AioPikaBroker
 from taskiq_redis import RedisAsyncResultBackend
+from taskiq import SimpleRetryMiddleware
+from taskiq.middlewares.prometheus import PrometheusMiddleware  # Correct import from taskiq core extra!
+from pathlib import Path  # ✅ IMPORTANT: Need Path for metrics_path!
+
+# Create a writable metrics directory inside your project!
+METRICS_DIR = Path(__file__).parent.parent / "data" / "taskiq_metrics"
+METRICS_DIR.mkdir(parents=True, exist_ok=True)  # Auto-creates if missing!
 
 # Define Result Backend
-result_backend = RedisAsyncResultBackend(redis_url="redis://localhost:6379/1")
+result_backend = RedisAsyncResultBackend(
+    redis_url="redis://localhost:6379/1",
+    keep_results=True,
+    result_ex_time=3600,
+)
 
 # Define Broker
 broker = AioPikaBroker(
-    "amqp://guest:guest@localhost:5672/"
-).with_result_backend(result_backend)
+    "amqp://guest:guest@localhost:5672/",
+    #dead_letter_queue_name="my_app.dlq",          # 👈 No need to put it Taskiq automatically creates a dead-letter queue (DLQ) for you. It will generate one using the default naming pattern: {queue_name}.dead_letter
+).with_result_backend(result_backend).with_middlewares(
+    # 🏆 THE MASTER ORDER:
+    # Prometheus MUST be the first (outermost) layer.
+    PrometheusMiddleware(
+        server_addr="0.0.0.0",    # Host to listen on
+        server_port=9000,         # Port for metrics server (HTTP endpoint: http://localhost:9000)
+        metrics_path=METRICS_DIR  # ✅ This is a DIRECTORY PATH (on disk), NOT an HTTP path!
+    ), 
+    SimpleRetryMiddleware(default_retry_count=3)
+)
+# the task definition : 
+# in src/tasks/indexing.py
+@broker.task(
+    task_name="indexing.process_file", # 1. Explicit naming (survives code refactoring)
+    max_retries=5,                     # 2. Resilience (must be plural in 0.12.4)
+    delay=10.0,                        # 3. Backoff in seconds (official param is 'delay')
+    task_timeout=300,                  # 4. Safety limit (must use 'task_timeout')
+    ack_on_error=False,                # 5. Reliability (keeps message in queue on failure)
+    retry_on_error=True,               # 6. REQUIRED: Activates the retry middleware engine
+    labels={"queue": "heavy_io"}       # 7. Routing (use 'labels')
+)
+async def my_task():
+    ...
+
 ```
 
+---
+
+### 💡 Simplifying PrometheusMiddleware (Using Defaults)
+
+Okay! That's a fantastic idea! Let's check what the **default parameters are for PrometheusMiddleware**!
+
+Yes! That's exactly right! If you just use `PrometheusMiddleware()` (no parameters), it will use the **defaults**, which should fix all our problems!
+
+Let's confirm the defaults by looking at Taskiq's source code:
+```python
+# Default parameters for PrometheusMiddleware
+def __init__(
+    self,
+    server_addr: str = "0.0.0.0",
+    server_port: int = 9000,
+    metrics_path: Path = Path("metrics"),  # Default is "metrics" directory in current working dir
+):
+    # ... code ...
+```
+
+#### What Happens If We Just Use `PrometheusMiddleware()`?
+1. **Defaults**:
+   - `server_addr="0.0.0.0"` (same as before)
+   - `server_port=9000` (same as before)
+   - `metrics_path=Path("metrics")` (default: creates a `metrics` directory in your current working directory)
+2. **HTTP Endpoint**:
+   - The HTTP endpoint still starts on `http://localhost:9000` when you run the worker!
+3. **Directory**:
+   - It creates a `metrics` folder in your **current working directory** (the folder you run the command from)
+
+#### But Wait: What If We Don't Want Prometheus At All?
+Alternatively, if you don't need Prometheus metrics right now, you can **just remove the middleware entirely** and only keep `SimpleRetryMiddleware(default_retry_count=3)`! That would also fix all errors!
+
+#### So Yes, You're 100% Correct!
+If you just use `PrometheusMiddleware()` (with no arguments):
+- You don't need to define `METRICS_DIR`
+- You don't need to call `mkdir()`
+- The HTTP endpoint still works when you start the worker!
+- It just uses the default `metrics` directory in your CWD!
+
+And like I said, if you don't need metrics right now, you can even **remove the `PrometheusMiddleware` entirely** and just keep the `SimpleRetryMiddleware`! 😊
+
+---
+
+#### **3.1. Result Backend**
+- **What it does: Stores task results (return values, exceptions, state) so you can inspect them later.**
+- **/1 database:**: Isolates result storage from other Redis data (e.g., cache, sessions). Prevents accidental key collisions..
+- **keep_results=True**: Task results are saved even after completion.
+- **result_ex_time=3600**: Results expire after 1 hour. Automatically cleans up old data.
+- **Pro Tip**: Always set a TTL. Without it, Redis becomes a memory bomb.
+
+#### **3.2. Broker**
+- **Why RabbitMQ over Redis or In‑memory?** : RabbitMQ gives you durable queues, acknowledgements, and dead‑letter exchanges – crucial for “at‑least‑once” delivery guarantees.
+- **Why Prometheus FIRST**: It must measure everything, including the retry attempts and any delays.
+- **dead_letter_queue_name="my_app.dlq"**: tells Taskiq (and RabbitMQ) to create a special queue called my_app.dlq where messages are sent after all retry attempts have failed (e.g., after max_retries=5 is exhausted).
+- **why ? dead_letter_queue_name="my_app.dlq"**: Prevents infinite loops – Without a DLQ, a failing task with ack_on_error=False keeps getting re‑queued forever, clogging the system.- Saves failed messages for inspection – Instead of deleting or losing the task, it's parked safely so you can debug later.- Protects the main queue – Poison messages are moved out, allowing healthy tasks to process without blocking. - Enables manual recovery – You can examine, fix, and replay failed messages from the DLQ.
+
+#### **3.3. Middlewares**
+- **default_retry_count**: The default number of retries for a task before it is marked as failed.
+
+#### **3.4. Task Definition**
+- **What it does**: Defines the behavior of a background task.
+- **Where**: In your task files (`src/tasks/`).
+- **Why**: Each task is a separate function, and you can define its behavior (like retries, timeouts, etc.).
+- **task_name="indexing.process_file"**: Explicit naming is critical for monitoring. Without it, Taskiq generates a name from the function – refactoring breaks dashboards & logs. Here, you decouple the logical name from the function name.
+- **max_retries=5, delay=10.0**: Set the task to retry up to 5 times with a delay of 10 seconds between each attempt Overrides the middleware’s default (3 retries). This specific task is more fragile (file indexing), so you give it more attempts. retry_delay=10.0 – waits 10 seconds between retries, not instant.
+- **timeout=300**: Hard timeout (5 minutes). If the task runs longer, Taskiq cancels it. Protects against “zombie” tasks that hang forever (e.g., stuck I/O, deadlocks)..
+- **ack_on_error=False – The Unsung Hero**: Default behaviour (ack_on_error=True): If a task raises an exception, the broker acknowledges (removes) the message from the queue. The task is lost forever. ack_on_error=False (recommended for critical tasks): On failure, the message stays in the queue and can be retried or moved to a dead‑letter exchange. This guarantees at‑least‑once processing. You must pair it with a retry middleware, otherwise you’ll get infinite loops.
+- **queue_name="heavy_io"**:  it tells the worker pool to route this task to a specific queue (e.g., “heavy_io” queue). You can start different worker groups listening to different queues – resource isolation.- One group of workers runs CPU‑bound tasks.- Another group runs I/O‑bound tasks.
+- **retry_on_error=True**: 	Mandatory. Without this, the retry middleware ignores the task entirely.
+
+this blueprint, adjust the numbers to your SLA, and you will out‑engineer 90% of distributed task setups.
+
+---
+
+## 📊 3. Prometheus Metrics Deep Dive
+
+The metrics are exposed by a built-in web server that the middleware starts automatically. Here's exactly where to find them and what they track.
+
+### 🔎 Where to Find the Metrics
+The PrometheusMiddleware starts a lightweight HTTP server that exposes your metrics at the **root of the server address/port** (e.g., `http://localhost:9000`). By default, it uses the following configuration:
+- **Host address**: `0.0.0.0`
+- **Port**: `9000`
+- **HTTP Endpoint**: `http://<server_addr>:<server_port>` (e.g., `http://localhost:9000`)
+
+To access the raw metrics, you can navigate to `http://localhost:9000` in your browser or use curl:
+```bash
+curl http://localhost:9000
+```
+If you need to customize the server's address or port, you can specify them when initializing the PrometheusMiddleware:
+```python
+PrometheusMiddleware(
+    server_addr="0.0.0.0",   # Host to listen on
+    server_port=9000,        # Port for metrics server
+    metrics_path=METRICS_DIR # 🚨 THIS IS A DIRECTORY PATH ON DISK, NOT AN HTTP PATH! 🚨
+)
+```
+**Important**:
+- The `metrics_path` parameter is a **directory path where metrics are temporarily saved on disk**, NOT the HTTP path!
+- The metrics server is only started in worker processes. When you run a worker with `taskiq worker`, it will start the server automatically. However, if you start a broker in a non‑worker context (for example, a FastAPI app sending tasks), the server will not be started, and the endpoint will not be available.
+
+### 📊 What the Metrics Mean
+The middleware tracks five key metrics. Each metric includes a `task_name` label to distinguish between different task functions.
+
+| Metric Name | Type | What It Tracks | PromQL Example |
+|-------------|------|----------------|----------------|
+| `found_errors` | Counter | Total number of tasks that failed with an exception. | `rate(found_errors[5m])` |
+| `received_tasks` | Counter | Total number of tasks received by the broker. | `rate(received_tasks[5m])` |
+| `success_tasks` | Counter | Total number of tasks that executed without errors. | `rate(success_tasks[5m])` |
+| `saved_results` | Counter | Total number of results successfully saved to the result backend (e.g., Redis). | `rate(saved_results[5m])` |
+| `execution_time` | Histogram | Duration of task execution (in seconds). This can be used to track percentiles (p50, p95, p99). | `histogram_quantile(0.95, sum(rate(execution_time_bucket[5m])) by (le, task_name))` |
+
+**Note**: `saved_results` may be lower than `success_tasks` if writing to the result backend fails (for example, when Redis is unavailable).
+
+---
+
+![alt text](image-1.png)
+
+#### **3.5. ack_on_error=True (Default – Not for critical tasks) or ack_on_error=False (Recommended for critical tasks)**
+##### **a- ack_on_error=True**
+- **What it does**: If a task raises an exception, the broker acknowledges (removes) the message from the queue. The task is lost forever.
+- **Why**: This is the default behavior. It's suitable for non-critical tasks where losing a task is acceptable.
+![alt text](image-2.png)
+
+##### **b- ack_on_error=False + Retry Middleware + Dead‑Letter Queue (Correct for critical tasks)**
+- **What it does**: If a task raises an exception, the broker does not acknowledge the message. The task is put back in the queue for retry.
+- **Why**: This is suitable for critical tasks where losing a task is not acceptable. Dead‑Letter Queue ensures that failed tasks are not lost forever. You can inspect them later and take corrective actions. the inspection will be found in the dead‑letter queue. you can start the queue again with a function that you define.
+
+
+![alt text](deepseek_mermaid_20260609_d00371.png)
+
+##### **c- Side‑by‑side comparison (visual table)**
+![alt text](deepseek_mermaid_20260609_2ff9b3.png)
+
+
+
+
+##### **d- Key takeaway as a simple decision flow**
+![alt text](deepseek_mermaid_20260609_da854d.png)
+
+**Rule of thumb**: Ask yourself – If this task fails and the message disappears forever, will a human being complain or money be lost? If yes → critical. If no → non-critical.
+![alt text](image-3.png)
 ### **The Integration Point (`src/main.py`)**
 Link your FastAPI application to Taskiq. The `taskiq_fastapi.init` function automatically handles the broker's startup and shutdown.
 
@@ -136,12 +323,19 @@ from src.tk_broker import broker
 from src.controllers.NLPController import NLPController
 from src.controllers.ProcessController import ProcessController
 from src.database import get_utils
-from taskiq import TaskiqDepends, TaskiqRetries
+from taskiq import TaskiqDepends
 import logging
 
 logger = logging.getLogger(__name__)
 
-@broker.task(task_name="indexing.process_file", max_retry=3)
+@broker.task(
+    task_name="indexing.process_file", 
+    max_retries=3,     # ✅ Plural as per docs
+    delay=10.0,       # ✅ Delay label
+    retry_on_error=True,
+    task_timeout=300, # ✅ Core timeout param
+    labels={"queue": "heavy_io"} # ✅ Routing label
+)
 async def process_file_task(
     asset_id: int,
     project_id: int,
@@ -164,7 +358,8 @@ async def process_file_task(
         return f"File {asset_id} processed into {len(chunks)} chunks"
     except Exception as e:
         logger.error(f"Failed to process file {asset_id}: {e}")
-        raise TaskiqRetries()
+        # Just raise the error - SimpleRetryMiddleware will handle the retry
+        raise e
 
 @broker.task(task_name="indexing.index_project")
 async def index_project_task(
@@ -252,12 +447,13 @@ In production, never use `@broker.task` without parameters. Explicit configurati
 
 ```python
 @broker.task(
-    task_name="indexing.process_file", # 1. Explicit naming
-    max_retry=5,                      # 2. Resilience
-    retry_delay=10.0,                 # 3. Backoff (seconds)
-    task_timeout=300,                 # 4. Safety (seconds)
-    ack_on_error=False,               # 5. Reliability
-    labels={"queue": "heavy_io"}      # 6. Routing
+    task_name="indexing.process_file", # 1. Explicit naming (survives code refactoring)
+    max_retries=5,                     # 2. Resilience (must be plural in 0.12.4)
+    delay=10.0,                        # 3. Backoff in seconds (official param is 'delay')
+    timeout=300,                       # 4. Safety limit (official param is 'timeout')
+    ack_on_error=False,                # 5. Reliability (keeps message in queue on failure)
+    retry_on_error=True,               # 6. REQUIRED: Activates the retry middleware engine
+    queue_name="heavy_io"              # 7. Routing (use queue_name, not labels dict)
 )
 async def my_task():
     ...
@@ -267,11 +463,11 @@ async def my_task():
 - **Why**: By default, Taskiq uses the function's path. If you move the file or rename the function, tasks already in RabbitMQ will crash because the worker can't find the "old" path.
 - **Pro Tip**: Always use a fixed string like `domain.action`. This allows you to refactor your code without breaking the queue.
 
-#### **2. `max_retry` & `retry_delay` (Resilience)**
+#### **2. `max_retries` & `delay` (Resilience)**
 - **Why**: Networks fail, and APIs time out. Retries give your task a second chance.
-- **Pro Tip**: Use `retry_delay` for simple tasks. For complex backoff, use the `SimpleRetryMiddleware` on the broker level.
+- **Pro Tip**: Use `delay` for simple tasks. For complex backoff, use the `SimpleRetryMiddleware` on the broker level.
 
-#### **3. `task_timeout` (The Deadman Switch)**
+#### **3. `timeout` (The Deadman Switch)**
 - **Why**: Prevents a task from hanging forever (e.g., an infinite loop or a stuck socket) and blocking a worker slot.
 - **Pro Tip**: Set this slightly higher than your expected maximum execution time. For RAG indexing, 300-600 seconds is common.
 
@@ -279,9 +475,9 @@ async def my_task():
 - **Why**: If `True`, the message is removed from RabbitMQ even if the task crashes. If `False`, the message stays in the queue (or goes to a Dead Letter Exchange) so you can investigate.
 - **Pro Tip**: Set to `False` for mission-critical data like financial transactions or primary indexing.
 
-#### **5. `labels` (Traffic Control)**
+#### **5. `queue_name` (Traffic Control)**
 - **Why**: Allows you to route tasks to specific workers. You might have a "fast" worker for notifications and a "heavy" worker with more RAM for PDF processing.
-- **Pro Tip**: Use labels like `{"queue": "high_priority"}` and start your workers with specific filters.
+- **Pro Tip**: Use queue names like `"high_priority"` and start your workers with specific filters.
 
 ---
 
@@ -307,11 +503,87 @@ result_backend = RedisAsyncResultBackend(
 broker = AioPikaBroker(
     "amqp://guest:guest@localhost:5672/"
 ).with_result_backend(result_backend).with_middlewares(
-    # Order matters! Prometheus should be outside retries
-    PrometheusMiddleware(metrics_path="/metrics"),
+    # 🏆 THE MASTER ORDER:
+    # Prometheus MUST be the first (outermost) layer.
+    PrometheusMiddleware(metrics_path="/metrics"), 
     SimpleRetryMiddleware(default_retry_count=3)
 )
 ```
+
+---
+
+## 🎓 The Middleware Onion: Why Order Matters (A Masterclass)
+
+As a world-class developer, I don't just write code; I design **Systems of Truth**. When configuring Taskiq middlewares, the order isn't a "suggestion"—it's the difference between **Observability** and **Delusion**.
+
+### **Why Order is Non-Negotiable: The Execution Stack**
+
+Middlewares in Taskiq work like an **Onion**. When a task runs, it travels from the **outside in** to reach your function, and then from the **inside out** to return the result.
+
+#### **1. Prometheus at the Outer Layer (The Source of Truth)**
+If Prometheus is first in the list, it wraps *everything* else. 
+- **The Call**: Prometheus starts its timer ⏱️ → Then it hands the task to the Retry middleware.
+- **The Crash**: If the task fails, the Retry middleware catches it and re-runs it 3 times.
+- **The Return**: Finally, when the task succeeds (or permanently fails), the flow returns to Prometheus.
+- **The Result**: Prometheus records the **Total Latency** and the **True Success/Failure**. Your Grafana dashboard shows you exactly how long the user waited and if the system ultimately delivered.
+
+#### **2. Prometheus at the Inner Layer (The "Metrics Liar" Trap)**
+If you put `SimpleRetryMiddleware` first, Prometheus is trapped *inside* the retry loop.
+- **The Disaster**: For every single retry attempt, Prometheus starts and stops a *new* timer.
+- **The Lie**: If a task fails 2 times and succeeds on the 3rd, your dashboard will show **3 separate successful-looking tasks** with very short durations. 
+- **The Consequence**: You will look at your metrics and say, "Everything is fast and healthy!" while in reality, your system is struggling, retrying constantly, and your true latency is 3x higher than what you see.
+
+### **The World-Class Verdict**
+- **Prometheus Outside**: Captures the **User Experience** (Total time, Final result).
+- **Retry Inside**: Captures the **Infrastructure Resilience** (Fixing transient errors).
+
+**Always put your monitoring at the gates.** If you don't measure the struggle, you aren't managing the system; you're just hoping it works. 🥂
+
+---
+
+### **Pro Infrastructure: The Redis Mansion Pattern**
+
+Imagine you live in a beautiful 16-room mansion (this is your **Redis instance**). Each room has a number from **0 to 15**. These are called **Logical Databases**.
+
+If you try to put your bed, your kitchen, and your office all in **Room 0**, you have a mess. If you drop a plate, you might break your computer. In tech, we call this a **Key Collision**.
+
+By assigning different indices (`/0`, `/1`, `/2`), we give each of your "workers" their own private room. 
+
+```python
+# In your Global Quota Manager 
+quota_redis_url = "redis://localhost:6379/0" 
+
+# In your Taskiq Result Backend 
+result_backend = RedisAsyncResultBackend(redis_url="redis://localhost:6379/1") 
+
+# In your Taskiq Rate Limiter Middleware 
+rate_limiter = RedisRateLimiter(redis_url="redis://localhost:6379/2")
+```
+
+Here is why this is the "Best Teacher" choice for your production system:
+
+#### **1. Room 0: The Global Quota Manager (The "Brain")**
+*   **Purpose**: This room holds your **Hybrid Strategy** counters (`quota:llm_global:...`).
+*   **Why here?**: This is the most sensitive data. By putting it in DB 0, we ensure that no other library (like Taskiq) accidentally deletes or overwrites your RPM counters. It is your "VIP Suite."
+
+#### **2. Room 1: Taskiq Result Backend (The "Archive")**
+*   **Purpose**: This room stores the results of your background tasks (e.g., "Task #123 finished successfully").
+*   **Why here?**: Taskiq generates *thousands* of keys for results. If we put these in the same room as your Quota Manager, your Redis would look like a cluttered warehouse. By separating them, we keep your Quota Manager fast and responsive.
+
+#### **3. Room 2: Taskiq Rate Limiter (The "Traffic Control")**
+*   **Purpose**: This room is used by Taskiq's internal middleware to manage its own background task limits.
+*   **Why here?**: Taskiq's rate limiter works differently than our "Final Boss" Hybrid strategy. By putting it in DB 2, we prevent Taskiq's internal logic from "tripping over" our custom global logic.
+
+---
+
+#### **The "Master Class" Benefits:**
+
+*   **The "Flush" Safety**: Imagine you want to clear all your old Taskiq results to save memory. You can run the command `FLUSHDB` while inside **DB 1**. 
+    - **Result**: All your old results are gone (Clean!), but your **Global Quota Manager in DB 0 is untouched**. If they were in the same room, you would accidentally reset your RPM limits and potentially get your API Key banned!
+*   **Debugging Clarity**: When you use a tool like *Redis Insight*, you can switch between "Room 0", "Room 1", and "Room 2". You will see exactly what is happening in each part of your system without being overwhelmed by "noise."
+*   **Zero Infrastructure Cost**: You are still only running **one** Redis server. You aren't paying for more RAM or more CPU. You are simply using the "Logical Rooms" that Redis already built for you.
+
+---
 
 ---
 
@@ -338,6 +610,43 @@ async def process_cv(
 ):
     # Logic...
 ```
+
+---
+
+## 🔌 5. The "Handshake": FastAPI Endpoint to Taskiq Task
+
+### **1. The "Handshake" Mechanism**
+The journey of a request follows this path:
+- **The Producer (FastAPI)**: Receives the HTTP request and uses the `.kiq()` method to "kick" the task into the broker.
+- **The Broker (RabbitMQ)**: Acts as the secure bridge, holding the task message in a queue.
+- **The Consumer (Taskiq Worker)**: A separate process that picks up the message, deserializes the arguments, and executes the heavy logic.
+
+### **2. Why This Matters for Production**
+- **Non-Blocking Performance**: Your API can return a `202 Accepted` response in milliseconds, regardless of whether the worker is processing a 1-page resume or a 500-page document. Your API response time is independent of how long the task takes. Whether the PDF is 1 page or 1,000 pages, the API response is always ~10ms.
+- **Infrastructure Decoupling**: The API doesn't need to know *how* to process the data; it only needs to know *how* to delegate the work. The API doesn't need to know *how* to parse a PDF. It only needs to know *how* to ask the worker to do it.
+
+### **The Producer Side (FastAPI Route)**
+In your [data.py](file:///c:/Users/user/Documents/trae_projects/CvanalyserFinal/src/routes/data.py), we don't call the function directly. We use the `.kiq()` method.
+
+```python
+from src.tasks.indexing import process_file_task
+
+@data_router.post("/process/{project_id}")
+async def process_data(project_id: int):
+    # 1. FastAPI receives the HTTP request.
+    # 2. We "kick" (kiq) the task into the broker.
+    await process_file_task.kiq(project_id=project_id, file_name="resume.pdf")
+    
+    # 3. FastAPI immediately returns a 202 Accepted.
+    return JSONResponse(content={"message": "Task queued!"})
+```
+
+### **The "Behind the Scenes" Handshake**
+1.  **Serialization**: FastAPI takes your arguments (`project_id=400`) and converts them into a JSON message.
+2.  **Enveloping**: Taskiq wraps this JSON in a "Task Envelope" that contains the task name (`indexing.process_file`) and metadata.
+3.  **Dispatch**: The message is sent to **RabbitMQ**.
+4.  **Pick-up**: A **Taskiq Worker** sitting on a different server (or container) sees the message in RabbitMQ.
+5.  **Execution**: The worker deserializes the message, finds the function marked with `@broker.task(task_name="indexing.process_file")`, and runs it.
 
 ---
 
