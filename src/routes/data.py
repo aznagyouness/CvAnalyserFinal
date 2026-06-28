@@ -259,7 +259,7 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
         do_reset = process_request.do_reset
 
         # Initialize controllers and CRUDs
-        process_controller = ProcessController(db_client=db_client_sessionmaker)
+        process_controller = ProcessController(project_id=str(project_id))
         asset_crud = AssetCrud(db_client=db_client_sessionmaker)
         chunk_crud = DataChunkCrud(db_client=db_client_sessionmaker)
 

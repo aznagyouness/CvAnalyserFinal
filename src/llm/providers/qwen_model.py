@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 from typing import List, Union, Optional, Dict, Any
-from aiolimiter import AsyncLimiter
 from openai import AsyncOpenAI
 from src.llm.llm_interface import LLMInterface
 from src.llm.LLMEnums import LLMRoleEnums
@@ -24,8 +23,6 @@ class QwenModel(LLMInterface):
         api_url: Optional[str] = None,
         default_generation_max_output_tokens: int = 2000,
         default_generation_temperature: float = 0.7,
-        max_requests_per_minute: int = settings.MAX_RPM_EMBEDDING,
-        max_concurrent_requests: int = settings.MAX_CONCURRENT_REQUESTS_EMBEDDING
     ):
         """
         Initializes the qwen model with an asynchronous client.
@@ -35,10 +32,6 @@ class QwenModel(LLMInterface):
 
         self.default_generation_max_output_tokens = default_generation_max_output_tokens
         self.default_generation_temperature = default_generation_temperature
-
-        # Rate limiting and concurrency control
-        self.rpm_limiter = AsyncLimiter(max_requests_per_minute, 60)
-        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         self.generation_model_id = None
         self.embedding_model_id = None
@@ -201,32 +194,30 @@ class QwenModel(LLMInterface):
         batches = [input_texts[i : i + batch_size] for i in range(0, len(input_texts), batch_size)]
         
         async def process_batch(batch: List[str], batch_idx: int) -> tuple:
-            """Processes a single batch with retries and rate limiting."""
-            async with self.semaphore:
-                for attempt in range(3):  # Max 3 retries
-                    try:
-                        async with self.rpm_limiter:
-                            response = await self.client.embeddings.create(
-                                model=self.embedding_model_id,
-                                input=batch,
-                                **kwargs
-                            )
-                            
-                            if not response or not response.data:
-                                raise ValueError(f"Empty response for batch {batch_idx}")
-                                
-                            return batch_idx, [item.embedding for item in response.data]
-                            
-                    except Exception as e:
-                        if attempt == 2:
-                            self.logger.error(f"Failed to process embedding batch {batch_idx} after 3 attempts: {str(e)}")
-                            raise e
+            """Processes a single batch with retries."""
+            for attempt in range(3):  # Max 3 retries
+                try:
+                    response = await self.client.embeddings.create(
+                        model=self.embedding_model_id,
+                        input=batch,
+                        **kwargs
+                    )
+                    
+                    if not response or not response.data:
+                        raise ValueError(f"Empty response for batch {batch_idx}")
                         
-                        wait_time = (2 ** attempt) + 0.1  # Exponential backoff
-                        self.logger.warning(
-                            f"Retry {attempt + 1}/3 for batch {batch_idx} in {wait_time:.1f}s due to: {str(e)}"
-                        )
-                        await asyncio.sleep(wait_time)
+                    return batch_idx, [item.embedding for item in response.data]
+                    
+                except Exception as e:
+                    if attempt == 2:
+                        self.logger.error(f"Failed to process embedding batch {batch_idx} after 3 attempts: {str(e)}")
+                        raise e
+                    
+                    wait_time = (2 ** attempt) + 0.1  # Exponential backoff
+                    self.logger.warning(
+                        f"Retry {attempt + 1}/3 for batch {batch_idx} in {wait_time:.1f}s due to: {str(e)}"
+                    )
+                    await asyncio.sleep(wait_time)
             
             return batch_idx, []
 

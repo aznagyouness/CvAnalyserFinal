@@ -105,6 +105,22 @@ class DataChunkCrud:
             logger.error(f"Error retrieving chunks for asset {asset_id}: {e}")
             raise
 
+    async def get_chunks_by_ids(self, chunk_ids: List[int]) -> List[DataChunk]:
+        """
+        Retrieves chunks by their IDs.
+        """
+        try:
+            async with self.session_factory() as session:
+                result = await session.execute(
+                    select(DataChunk)
+                    .where(DataChunk.chunk_id.in_(chunk_ids))
+                    .order_by(DataChunk.chunk_order)
+                )
+                return list(result.scalars().all())
+        except SQLAlchemyError as e:
+            logger.error(f"Error retrieving chunks by IDs: {e}")
+            raise
+
     async def get_chunks_by_project(self, project_id: int) -> List[DataChunk]:
         """
         Retrieves all chunks for a specific project.
@@ -112,13 +128,14 @@ class DataChunkCrud:
         try:
             async with self.session_factory() as session:
                 result = await session.execute(
-                    select(DataChunk).where(DataChunk.chunk_project_id == project_id)
+                    select(DataChunk)
+                    .where(DataChunk.chunk_project_id == project_id)
+                    .order_by(DataChunk.chunk_asset_id, DataChunk.chunk_order)
                 )
                 return list(result.scalars().all())
         except SQLAlchemyError as e:
             logger.error(f"Error retrieving chunks for project {project_id}: {e}")
             raise
-
     async def delete_chunks_by_project(self, project_id: int) -> int:
         """
         Deletes all chunks associated with a project.

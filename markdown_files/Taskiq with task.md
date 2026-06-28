@@ -81,17 +81,13 @@ async def save_to_db(data: str, db = TaskiqDepends(get_db)):
 - **Non-Idempotent Actions**: If your task sends an email, retrying might send the same email twice.
 
 ### **Pro Strategy (Selective Retries):**
-Instead of `max_retry` on everything, catch specific errors:
+Instead of `max_retry` on everything, you can use the `retry_on_error=True` label and let the middleware handle it:
 ```python
-from taskiq import TaskiqRetries
-
-@broker.task
+@broker.task(retry_on_error=True, max_retry=3)
 async def index_task(project_id: int):
-    try:
-        await nlp_controller.index(...)
-    except (ConnectionError, TimeoutError):
-        # Only retry if it's a network/timeout issue
-        raise TaskiqRetries() 
+    # If any exception is raised, the SimpleRetryMiddleware 
+    # will automatically catch it and retry the task.
+    await nlp_controller.index(...)
 ```
 
 ---

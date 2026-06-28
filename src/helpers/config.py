@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int
     CHUNK_OVERLAP: int
     MAX_RPM_EMBEDDING: int
+    MAX_RPM_GENERATION: int = 20 # Default if not in .env
     MAX_CONCURRENT_REQUESTS_EMBEDDING: int
     CELERY_BROKER_URL: str
     CELERY_RESULT_BACKEND_URL: str
@@ -24,8 +25,19 @@ class Settings(BaseSettings):
     CELERY_TASK_ACKS_LATE: bool
     CELERY_WORKER_CONCURRENCY: int
     POSTGRES_DATABASE_URL: str
+    REDIS_URL_QUOTA: str
+    REDIS_URL_TASKIQ_RESULTS: str
+    REDIS_URL_TASKIQ_LIMITER: str
 
+    TASKIQ_BROKER_URL: str
 
+    # ── Idempotency ──────────────────────────────────────────────────────────────
+    # run_ttl: MUST be > p99 task runtime. 
+    IDEMPOTENCY_RUN_TTL: int = 900
+    # done_ttl: dedup window — within this period, a duplicate is recognized and skipped.
+    IDEMPOTENCY_DONE_TTL: int = 86_400
+    # strict_audit: True = task fails if Postgres audit insert fails.
+    IDEMPOTENCY_STRICT_AUDIT: bool = True
     
 
     GENERATION_BACKEND: str
