@@ -167,3 +167,5 @@ async def get_task_result(task_id: str):
         "result": result.return_value,
         "execution_time": result.execution_time
     }
+
+

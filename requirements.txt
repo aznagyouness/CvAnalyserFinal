@@ -60,6 +60,8 @@ taskiq-aio-pika==0.6.0
 taskiq-redis==1.2.2
 taskiq-fastapi==0.5.0
 taskiq[metrics,orjson,uv]==0.12.4
+taskiq-pipelines==0.1.4
+taskiq-dashboard==0.4.4
 
 
 # for celery task queue and Background Processing

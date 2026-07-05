@@ -103,7 +103,8 @@ from contextlib import asynccontextmanager
 
 from src.helpers.config import get_settings
 from src.helpers.quota import GlobalLLMQuota
-from src.routes import data, welcome, qdrant_test, llm_test, nlp, stream
+from src.routes import data, welcome, qdrant_test, llm_test, nlp, stream, test_taskiq_router,task_result_router
+
 
 from src.utils.metrics import setup_metrics
 import src.database as db
@@ -189,3 +190,5 @@ app.include_router(welcome.data_router)
 app.include_router(qdrant_test.router)
 app.include_router(llm_test.router)
 app.include_router(stream.stream_router)
+app.include_router(test_taskiq_router.test_taskiq_router)
+app.include_router(task_result_router.task_result_router)
