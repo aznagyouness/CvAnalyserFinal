@@ -21,26 +21,40 @@ To implement the professional patterns in this guide, you will need the followin
 
 ### **Core & Infrastructure**
 ```bash
-pip install taskiq[metrics]==0.12.4  # The core library + built-in Prometheus support
-pip install taskiq-aio-pika          # RabbitMQ Broker (Async)
-pip install taskiq-redis             # Redis Result Backend & Broker
+pip install taskiq==0.12.4  # The core library ⏰ Periodic/Cron tasks also supported
+pip install taskiq[metrics,orjson,uv]==0.12.4  # built-in Prometheus support  # Ultra-fast JSON serialization
+pip install taskiq-aio-pika==0.6.0          # RabbitMQ Broker (Async)
+pip install taskiq-redis==1.2.2             # Redis Result Backend
 ```
 
 ### **Integrations**
 ```bash
-pip install taskiq-fastapi           # FastAPI Dependency Injection support
-pip install taskiq-dashboard         # Web UI for monitoring
+pip install taskiq-fastapi==0.5.0           # FastAPI Dependency Injection support
+pip install taskiq-dashboard==0.4.4        # Web UI for monitoring
 ```
 
 ### **Observability & Safety**
 ```bash
-pip install taskiq-sentry            # Error tracking in background tasks
-pip install taskiq-opentelemetry     # Distributed tracing
-pip install taskiq-rate-limiter      # 🛡️ Global rate limiting
-pip install taskiq-pipelines         # 🔗 Chaining tasks (A -> B -> C)
-pip install taskiq-scheduler         # ⏰ Periodic/Cron tasks
-pip install orjson                   # Ultra-fast JSON serialization
+
+pip install taskiq-pipelines==0.1.4         # 🔗 Chaining tasks (A -> B -> C)
+pip install sentry-sdk[fastapi]==2.19.2      # Sentry Error Tracking
+# ==> you need to Create Sentry account (free tier: 5k events/month) and get the DSN --> then create functions to capture errors
+# ==> Not good & it could be replaced with what you already have PostgreSQL, Prometheus, and Grafana, you don't need to pay for Sentry. 
 ```
+
+| Feature | Benefit of sentry-sdk|
+|---------|---------|
+| **Error tracking** | Know immediately when tasks fail |
+| **Full traceback** | See exactly where code broke |
+| **Request context** | Know which user/file caused the error |
+| **Performance monitoring** | Identify slow tasks/endpoints |
+| **Alerting** | Get notified via Slack/email/SMS |
+| **Release tracking** | Know which deployment introduced the bug |
+| **User impact** | See how many users are affected |
+| **Trending** | Track error frequency over time |
+
+                   
+
 
 ---
 
@@ -61,10 +75,10 @@ pip install orjson                   # Ultra-fast JSON serialization
 - **Why**: It allows Taskiq workers to "see" your FastAPI app. This enables the use of `TaskiqDepends`, allowing background tasks to share the same Database sessions and Settings as your API routes.
 - **Pro Tip**: Essential for RAG projects to ensure workers use the exact same DB and VectorDB configurations as the API.
 
-### **4. `taskiq-prometheus` & `taskiq-dashboard`**
-- **Where**: Prometheus is a middleware on the broker; Dashboard is a separate process.
-- **Why**: Prometheus provides the raw data (RPM, latency, error rates) for your Grafana dashboards. The Dashboard provides a human-friendly "Flower-like" UI for quick debugging.
-- **Pro Tip**: Always enable Prometheus in production to catch "silent" performance degradations.
+### **4. `metrics` & `taskiq-dashboard`**
+- **Where**: Metrics (Prometheus support) is a middleware on the broker; Dashboard is a separate process.
+- **Why**: `metrics` provides the raw data (RPM, latency, error rates) for your Grafana dashboards. The Dashboard provides a human-friendly "Flower-like" UI for quick debugging.
+- **Pro Tip**: Always enable metrics in production to catch "silent" performance degradations.
 
 ### **5. `taskiq-sentry` & `taskiq-opentelemetry`**
 - **Where**: Middlewares on the broker.

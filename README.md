@@ -1,6 +1,6 @@
 # 🚀 CvAnalyser - AI-Powered CV Analysis Platform
 
-An intelligent, enterprise-grade platform for analyzing and processing CVs using **FastAPI**, **PostgreSQL** (with pgvector), **Qdrant** (Vector DB), and **Celery** for high-performance background processing.
+An intelligent, enterprise-grade platform for analyzing and processing CVs using **FastAPI**, **PostgreSQL** (with pgvector), **Qdrant** (Vector DB), and **Taskiq** for high-performance background processing.
 
 ---
 
@@ -16,10 +16,11 @@ An intelligent, enterprise-grade platform for analyzing and processing CVs using
 - **Multilingual Support 🌍**: YAML-based prompt templates for **English**, **Arabic**, and **French**, ensuring high-quality, localized AI responses.
 - **Modular AI Architecture**: Pluggable provider system (Qwen, DeepSeek, Minimax) managed via a unified **LLMFactory**.
 - **Enterprise-Grade Performance**:
-  - **Resilient Embeddings**: High-throughput system with `aiolimiter` (RPM control), `asyncio.Semaphore` (concurrency), and exponential backoff retries.
+  - **Global RPM Control**: Distributed rate limiting using Redis to protect LLM API keys and ensure fair usage (Hybrid Strategy).
+  - **Task-per-Batch Indexing**: Split large jobs into small, parallelizable tasks using Taskiq for maximum throughput.
   - **SQL & Vector Batching**: Optimized multi-row insertions and provider-specific batching (e.g., Qwen's 10-item limit).
 - **Safety & Cost Control 🛡️**: Global limits for character input, generation tokens, and hallucination control (temperature).
-- **Scalable Monitoring**: Full observability stack with Prometheus, Grafana, Node Exporter, and Postgres Exporter.
+- **Scalable Monitoring**: Full observability stack with Prometheus, Grafana, Node Exporter, Postgres Exporter, and Taskiq Dashboard.
 
 ---
 
@@ -29,8 +30,8 @@ An intelligent, enterprise-grade platform for analyzing and processing CVs using
 - **Vector DB**: [Qdrant](https://qdrant.tech/) (v1.17.0)
 - **Relational DB**: [PostgreSQL](https://www.postgresql.org/) (with [pgvector](https://github.com/pgvector/pgvector))
 - **LLM Providers**: Qwen (DashScope), DeepSeek, Minimax.
-- **Task Queue**: [Celery](https://docs.celeryq.dev/) (with [RabbitMQ](https://www.rabbitmq.com/) & [Redis](https://redis.io/))
-- **Monitoring**: Prometheus, Grafana, Node Exporter, Postgres Exporter.
+- **Task Queue**: [Taskiq](https://taskiq-python.github.io/) (with [RabbitMQ](https://www.rabbitmq.com/) broker & [Redis](https://redis.io/) for results and rate limiting)
+- **Monitoring**: Prometheus, Grafana, Node Exporter, Postgres Exporter, Taskiq Dashboard.
 - **Infrastructure**: [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
 
 ---
@@ -63,7 +64,8 @@ alembic upgrade head
 
 ### 4. Run the Platform
 - **API Server**: `uvicorn src.main:app --reload`
-- **Celery Worker**: `celery -A src.celery_app worker --loglevel=info`
+- **Taskiq Worker**: `taskiq worker src.tasks:broker --workers 4 --max-async-tasks 100 --loglevel info`
+- **Taskiq Dashboard (optional, for monitoring)**: `taskiq dashboard src.tasks:broker --port 8080`
 
 ---
 
@@ -97,6 +99,9 @@ alembic upgrade head
 
 - **[QDRANT_GUIDE.md](./QDRANT_GUIDE.md)**: Deep dive into the Vector DB, RAG pipeline, and Postman examples.
 - **[ALEMBIC_GUIDE.md](./ALEMBIC_GUIDE.md)**: Managing SQL database migrations.
+- **[taskiq_pro.md](./markdown_files/taskiq_pro.md)**: Professional Taskiq guide covering broker setup, middleware, retries, and integration with FastAPI.
+- **[RPM.md](./markdown_files/RPM.md)**: Hybrid strategy for LLM rate limiting and quota management (Multi-Lane Highway architecture).
+- **[Postman.md](./markdown_files/Postman.md)**: Step-by-step Postman examples for all endpoints (including test endpoints for Taskiq).
 
 ---
 
@@ -113,7 +118,7 @@ alembic upgrade head
 ## 📊 Monitoring & Observability
 - **Prometheus**: Metrics collection on `http://localhost:9090`.
 - **Grafana**: Pre-configured dashboards on `http://localhost:3000`.
-- **Flower**: Celery worker monitoring on `http://localhost:5555`.
+- **Taskiq Dashboard**: Real-time task queue monitoring on `http://localhost:8080` (optional, run with `taskiq dashboard src.tasks:broker --port 8080`).
 
 ---
 
