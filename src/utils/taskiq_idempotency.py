@@ -10,7 +10,7 @@ from typing import Any, Callable, Optional
 from prometheus_client import Counter, Gauge
 from redis.asyncio import Redis
 from sqlalchemy.exc import SQLAlchemyError
-from taskiq import SimpleRetryMiddleware, TaskiqMiddleware, TaskiqResult
+from taskiq import TaskiqMiddleware, TaskiqResult
 from taskiq.message import TaskiqMessage
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ IDEMPOTENCY_INFLIGHT = Gauge(
     "taskiq_idempotency_inflight_tasks",
     "Tasks currently holding an in-flight idempotency lock",
 )
+
 
 # ─── Middleware ─────────────────────────────────────────────────────────────
 class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
@@ -202,6 +203,7 @@ class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
 
         return message
 
+    # ─── POST_EXECUTE: Extract return_value from TaskiqResult ──────────────
     async def post_execute(self, message: TaskiqMessage, result: Any) -> None:
         labels = message.labels or {}
         task_name = message.task_name
@@ -228,9 +230,10 @@ class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
         if run_key:
             await self._safe_redis_delete(run_key)
 
-        # Update audit row
+        # ✅ FIX: Extract the actual return value from TaskiqResult
         if execution_id_str:
-            await self._update_audit(int(execution_id_str), "SUCCESS", result, None)
+            actual_result = self._extract_return_value(result)
+            await self._update_audit(int(execution_id_str), "SUCCESS", actual_result, None)
 
     async def on_error(
         self, message: TaskiqMessage, result: Any, exception: BaseException,
@@ -240,7 +243,6 @@ class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
         execution_id_str = labels.get("db_execution_id")
         task_name = message.task_name
 
-        # If task was marked as skip, don't decrement inflight
         if labels.get("should_skip") == "true":
             return
 
@@ -251,6 +253,28 @@ class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
 
         if execution_id_str:
             await self._update_audit(int(execution_id_str), "FAILED", None, repr(exception))
+
+    # ─── Helper: Extract return_value from TaskiqResult ────────────────────
+    @staticmethod
+    def _extract_return_value(result: Any) -> Any:
+        """
+        Extract the actual return value from a TaskiqResult wrapper.
+        
+        Taskiq passes a TaskiqResult object to post_execute, which contains:
+        - return_value: YOUR actual return value (what we want)
+        - is_err, error, execution_time, labels, log: Taskiq metadata
+        
+        We only want to store `return_value` in the audit table.
+        """
+        if result is None:
+            return None
+        
+        # If it's a TaskiqResult object (has return_value attribute)
+        if hasattr(result, "return_value"):
+            return result.return_value
+        
+        # Otherwise, it's already the raw value
+        return result
 
     async def _safe_redis_delete(self, key: str) -> None:
         if self._redis is None:
@@ -296,6 +320,9 @@ class TaskiqIdempotencyMiddleware(TaskiqMiddleware):
             logger.exception("unexpected error updating audit row %s", execution_id)
         finally:
             await session.close()
+
+
+            
 """
 # src/utils/taskiq_idempotency.py
 from __future__ import annotations

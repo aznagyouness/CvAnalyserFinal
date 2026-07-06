@@ -1,9 +1,11 @@
 # src/services/task_result_service.py
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import logging
+import re
 from typing import Optional, Dict, Any
 
 from sqlalchemy import select, and_
@@ -26,6 +28,58 @@ class TaskResultService:
     
     def __init__(self, db_client: async_sessionmaker[AsyncSession]):
         self.session_factory = db_client
+    
+    # ─── Helper: Extract return_value from legacy bad data ─────────────────
+    @staticmethod
+    def _extract_return_value(raw_result: Any) -> Any:
+        """
+        Extract the actual return value from stored result.
+        
+        Handles TWO formats:
+        1. NEW (correct): Clean dict/list/str from result.return_value
+           e.g., {"status": "done", "text": "hello"}
+        
+        2. OLD (buggy): String repr of TaskiqResult wrapper
+           e.g., "is_err=False log=None return_value={'status': 'done', ...} execution_time=19.11 ..."
+        
+        For old format, we parse out the return_value dict.
+        """
+        if raw_result is None:
+            return None
+        
+        # If it's already a clean value (dict, list, str, int, float, bool)
+        if isinstance(raw_result, (dict, list, int, float, bool)):
+            return raw_result
+        
+        # If it's a string that looks like a TaskiqResult repr
+        if isinstance(raw_result, str) and raw_result.startswith("is_err="):
+            try:
+                # Extract return_value={...} using regex
+                # Pattern: return_value=(DICT_OR_VALUE) followed by space + next field
+                match = re.search(
+                    r"return_value=(\{.*?\}|\[.*?\]|'.*?'|\".*?\"|\d+|True|False|None)\s+(?:execution_time|labels|error|is_err|log)",
+                    raw_result,
+                    re.DOTALL,
+                )
+                if match:
+                    return_value_str = match.group(1)
+                    # Safely evaluate the Python literal
+                    return ast.literal_eval(return_value_str)
+                
+                # Fallback: try to find any dict-like structure
+                dict_match = re.search(r"return_value=(\{.*\})", raw_result, re.DOTALL)
+                if dict_match:
+                    return ast.literal_eval(dict_match.group(1))
+                    
+            except Exception as e:
+                logger.warning(
+                    "Failed to extract return_value from legacy TaskiqResult repr: %s",
+                    e,
+                )
+                return raw_result  # Return as-is if parsing fails
+        
+        # Unknown format — return as-is
+        return raw_result
     
     async def get_result_by_task_id(self, task_id: str) -> Dict[str, Any]:
         """
@@ -60,8 +114,6 @@ class TaskResultService:
                 result = await session.execute(stmt)
                 record = result.scalar_one_or_none()
             
-            # Session is CLOSED here — outside the `async with` block
-            
             if record is None:
                 return {"task_id": task_id, "status": "PENDING"}
             
@@ -69,7 +121,7 @@ class TaskResultService:
                 "task_id": record.taskiq_task_id,
                 "task_name": record.task_name,
                 "status": record.status,
-                "result": record.result if record.status == "SUCCESS" else None,
+                "result": self._extract_return_value(record.result) if record.status == "SUCCESS" else None,
                 "error": record.error if record.status == "FAILED" else None,
                 "enqueued_at": record.enqueued_at.isoformat() if record.enqueued_at else None,
                 "completed_at": record.completed_at.isoformat() if record.completed_at else None,
@@ -96,7 +148,6 @@ class TaskResultService:
         
         Session opened for ~2ms only.
         """
-        # Generate the same hash the middleware uses
         payload = {
             "task_name": task_name,
             "args": args or [],
@@ -121,8 +172,6 @@ class TaskResultService:
                 result = await session.execute(stmt)
                 record = result.scalar_one_or_none()
             
-            # Session is CLOSED here
-            
             if record is None:
                 return None
             
@@ -135,7 +184,7 @@ class TaskResultService:
                     "kwargs": record.task_args.get("kwargs", {}),
                 },
                 "status": record.status,
-                "result": record.result,
+                "result": self._extract_return_value(record.result),
                 "enqueued_at": record.enqueued_at.isoformat() if record.enqueued_at else None,
                 "completed_at": record.completed_at.isoformat() if record.completed_at else None,
                 "linkage_verified": True,
@@ -150,14 +199,9 @@ class TaskResultService:
         args: list = None,
         kwargs: dict = None,
     ) -> list[Dict[str, Any]]:
-        """Get ALL executions of the same task signature (for debugging).
-        [
-           {"task_id": "...", "status": "SUCCESS", "result": "...", ...},
-           {"task_id": "...", "status": "FAILED", "error": "...", ...},
-           {"task_id": "...", "status": "SUCCESS", "result": "...", ...}
-        ]
-        if no executions found, return [] if 1 success you get 1 success
-        if 1 failed you get 1 failed
+        """
+        Get ALL executions of the same task signature (for debugging).
+        Returns list of execution records, newest first.
         """
         payload = {
             "task_name": task_name,
@@ -177,14 +221,12 @@ class TaskResultService:
                 result = await session.execute(stmt)
                 records = result.scalars().all()
             
-            # Session closed here
-            
             return [
                 {
                     "task_id": r.taskiq_task_id,
                     "task_name": r.task_name,
                     "status": r.status,
-                    "result": r.result if r.status == "SUCCESS" else None,
+                    "result": self._extract_return_value(r.result) if r.status == "SUCCESS" else None,
                     "error": r.error if r.status == "FAILED" else None,
                     "enqueued_at": r.enqueued_at.isoformat() if r.enqueued_at else None,
                     "completed_at": r.completed_at.isoformat() if r.completed_at else None,

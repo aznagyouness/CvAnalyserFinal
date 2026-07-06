@@ -63,10 +63,11 @@ idempotency_middleware = TaskiqIdempotencyMiddleware(
     strict_audit=settings.IDEMPOTENCY_STRICT_AUDIT,
 )
 
+
 broker = broker.with_middlewares(
-    idempotency_middleware,
-    SimpleRetryMiddleware(default_retry_count=3),  # ← Use Taskiq's built-in
-    PrometheusMiddleware(server_addr="0.0.0.0", server_port=9000),
+    PrometheusMiddleware(server_addr="0.0.0.0", server_port=9000),  # outermost: sees EVERYTHING  # Sees the message first. Measures total lifecycle including idempotency + retries + task execution.
+    SimpleRetryMiddleware(default_retry_count=3),                    # middle: handles failures   # Wraps the idempotency check + task. Hides retries from the inner layers.
+    idempotency_middleware,                                          # innermost: gate just before execution  # Sits right above the task. Decides on duplicates just-in-time, right before the actual function runs.
 )
 
 # 4. Import tasks AFTER broker is built
