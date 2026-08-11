@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -198,10 +198,12 @@ class TaskResultService:
         task_name: str,
         args: list = None,
         kwargs: dict = None,
-    ) -> list[Dict[str, Any]]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
         """
-        Get ALL executions of the same task signature (for debugging).
-        Returns list of execution records, newest first.
+        Get paginated executions of the same task signature.
+        Returns total_count, limit, offset, and the executions list.
         """
         payload = {
             "task_name": task_name,
@@ -213,26 +215,42 @@ class TaskResultService:
         
         try:
             async with self.session_factory() as session:
+                # 1. Get the total count of records for this hash
+                count_stmt = select(func.count(TaskiqTaskExecution.execution_id)).where(
+                    TaskiqTaskExecution.task_args_hash == task_hash
+                )
+                total_count = (await session.execute(count_stmt)).scalar_one()
+                
+                # 2. Get the paginated records
                 stmt = (
                     select(TaskiqTaskExecution)
                     .where(TaskiqTaskExecution.task_args_hash == task_hash)
                     .order_by(TaskiqTaskExecution.enqueued_at.desc())
+                    .limit(limit)
+                    .offset(offset)
                 )
                 result = await session.execute(stmt)
                 records = result.scalars().all()
             
-            return [
-                {
-                    "task_id": r.taskiq_task_id,
-                    "task_name": r.task_name,
-                    "status": r.status,
-                    "result": self._extract_return_value(r.result) if r.status == "SUCCESS" else None,
-                    "error": r.error if r.status == "FAILED" else None,
-                    "enqueued_at": r.enqueued_at.isoformat() if r.enqueued_at else None,
-                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-                }
-                for r in records
-            ]
+            # Session closed here
+            
+            return {
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset,
+                "executions": [
+                    {
+                        "task_id": r.taskiq_task_id,
+                        "task_name": r.task_name,
+                        "status": r.status,
+                        "result": self._extract_return_value(r.result) if r.status == "SUCCESS" else None,
+                        "error": r.error if r.status == "FAILED" else None,
+                        "enqueued_at": r.enqueued_at.isoformat() if r.enqueued_at else None,
+                        "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                    }
+                    for r in records
+                ]
+            }
         except SQLAlchemyError as e:
             logger.error("PostgreSQL query failed: %s", e)
-            return []
+            return {"total_count": 0, "limit": limit, "offset": offset, "executions": []}

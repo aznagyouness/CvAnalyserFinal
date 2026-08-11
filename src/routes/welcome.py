@@ -169,3 +169,19 @@ async def get_task_result(task_id: str):
     }
 
 
+#====================observability=======================================================================
+
+
+from src.observability.logging import get_logger
+
+log = get_logger(__name__)
+
+@data_router.get("/ping_structlog")
+async def ping(request: Request):
+    try:
+        # Make it impossible to miss
+        log.info("info log", status=200, test="success")
+        return {"status": "ok"}
+    except Exception as e:
+        log.error("request_failed", status=500, error=str(e))
+        return {"status": "error", "error": str(e)}

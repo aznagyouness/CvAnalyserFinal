@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from taskiq import Context, TaskiqDepends
+
 from typing import Annotated
 
 from src.tk_broker import broker
@@ -50,6 +51,21 @@ async def my_task(
 
 
 # ─── Task 2: Test Task with Text Parameter ───────────────────────────────────
+
+###############################################################
+# src/tasks/test_taskiq.py
+
+import asyncio
+from typing import Annotated, Any, Dict
+
+from taskiq import Context, TaskiqDepends
+
+from src.observability.logging import get_logger
+from src.tk_broker import broker
+
+log = get_logger(__name__)
+
+
 @broker.task(
     task_name="src.tasks.test_taskiq:my_task2",
     timeout=120.0,
@@ -63,33 +79,28 @@ async def my_task2(
     """
     Test task with text parameter.
     Used for testing parameter passing and idempotency.
-    
-    Args:
-        text: Text to process
-        delay: Optional delay in seconds (for testing long-running tasks)
-        context: Taskiq context (injected automatically)
-    
-    Returns:
-        Dictionary with processing results
     """
-    # Check if this task was marked as duplicate
-    if context and context.message.labels.get("should_skip") == "true":
-        task_id = context.message.task_id
-        logger.info(f"Task {task_id} skipped (duplicate)")
-        return {"status": "skipped_by_idempotency", "task_id": task_id}
-    
     task_id = context.message.task_id if context else "unknown"
-    
-    logger.info(f"Executing my_task2 with text: '{text}', delay: {delay}s, task_id: {task_id}")
-    
-    # Simulate work with optional delay
+    labels = context.message.labels if context else {}
+
+    # Idempotency gate (set by TaskiqIdempotencyMiddleware)
+    if labels.get("should_skip") == "true":
+        log.info("task_skipped_duplicate", reason="idempotency")
+        return {"status": "skipped_by_idempotency", "task_id": task_id}
+
+    # Log freely — trace_id, method, path, user_id are already bound
+    # by TaskiqContextPropagationMiddleware.pre_execute
+    log.info("task_started", text=text, delay=delay)
+
     if delay > 0:
-        logger.info(f"my_task2: waiting {delay} seconds...")
+        log.info("task_waiting", seconds=delay)
         await asyncio.sleep(delay)
     else:
-        await asyncio.sleep(0.5)  # Small default delay
-    
-    result = {
+        await asyncio.sleep(0.5)
+
+    log.info("task_completed", status="done", text_length=len(text))
+
+    return {
         "status": "done",
         "task_id": task_id,
         "text": text,
@@ -98,10 +109,7 @@ async def my_task2(
         "message": f"Processed text: '{text}'",
     }
     
-    logger.info(f"my_task2 completed: {result}")
-    return result
-
-
+################################################################
 # ─── Task 3: Task That Can Fail (for testing error handling) ─────────────────
 @broker.task(
     task_name="src.tasks.test_taskiq:failing_task",
@@ -239,4 +247,59 @@ async def complex_task(
     }
     
     logger.info(f"complex_task completed: {result}")
+    return result
+
+
+
+# task 6: Document Analysis Task (for testing document processing)
+
+
+# src/tasks/test_taskiq.py
+import asyncio  
+from typing import Annotated, Any, Dict
+
+from taskiq import Context, TaskiqDepends
+
+from src.observability.logging import get_logger
+from src.tk_broker import broker
+
+log = get_logger(__name__)
+
+
+@broker.task(
+    task_name="src.tasks.test_taskiq:analyze_document",
+    timeout=300.0,
+    queue="youness queue",                              # ← RabbitMQ queue name
+    labels={"queue": "default", "task_type": "document_analysis"},
+)
+async def analyze_document(
+    document_id: str,
+    content: str,
+    context: Annotated[Context, TaskiqDepends()] = None,
+) -> Dict[str, Any]:
+    """
+    Analyze a document and return structured results.
+    
+    trace_id, method, path, user_id are automatically injected
+    into every log line by TaskiqContextPropagationMiddleware.
+    """
+    task_id = context.message.task_id if context else "unknown"
+    
+    log.info("analysis_started", document_id=document_id, content_length=len(content))
+    
+    # Simulate heavy work
+    await asyncio.sleep(10)
+    
+    word_count = len(content.split())
+    char_count = len(content)
+    
+    result = {
+        "document_id": document_id,
+        "word_count": word_count,
+        "char_count": char_count,
+        "summary": f"Document has {word_count} words",
+    }
+    
+    log.info("analysis_completed", document_id=document_id, word_count=word_count)
+    
     return result

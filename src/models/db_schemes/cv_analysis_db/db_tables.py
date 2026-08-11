@@ -44,7 +44,9 @@ class TaskiqTaskExecution(BaseTable):
     # For JSON columns, we use dict/Any for type hinting
     task_args: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="RUNNING")
-    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    # ✅ FIX: Changed from dict[str, Any] to Any
+    # Tasks can return dicts, lists, strings, numbers, etc.
+    result: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     enqueued_at: Mapped[datetime] = mapped_column(

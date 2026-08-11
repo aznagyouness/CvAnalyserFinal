@@ -11,7 +11,11 @@ from pydantic import BaseModel, Field
 from src.tasks.test_taskiq import my_task, my_task2, failing_task
 from src.services.task_result_service import TaskResultService
 
-logger = logging.getLogger(__name__)
+from src.observability.logging import get_logger
+from src.observability.context import snapshot_context
+
+
+logger = get_logger(__name__)
 
 test_taskiq_router = APIRouter(prefix="/test-taskiq", tags=["Test Taskiq"])
 
@@ -54,6 +58,19 @@ def _get_session_factory(request: Request):
 
 
 # ─── Endpoint 1: Queue a Task (Fire-and-Forget) ─────────────────────────────
+# src/api/routers/test_taskiq.py  (or wherever your router lives)
+
+from fastapi import APIRouter, HTTPException
+from src.observability.logging import get_logger
+# Remove this if snapshot_context is not used elsewhere in the file:
+# from src.observability.context import snapshot_context
+
+from src.tasks.test_taskiq import my_task2
+
+logger = get_logger(__name__)
+test_taskiq_router = APIRouter(prefix="/test-taskiq")
+
+
 @test_taskiq_router.post("/queue", response_model=TestTaskResponse, status_code=202)
 async def queue_test_task(request: TestTaskRequest):
     """
@@ -61,8 +78,10 @@ async def queue_test_task(request: TestTaskRequest):
     Use GET /test-taskiq/status/{task_id} to check result.
     """
     try:
+        # The middleware automatically captures trace_id, method, path, user_id
+        # from the current structlog context and injects them into message labels.
         task = await my_task2.kiq(text=request.text, delay=request.delay)
-        
+
         return TestTaskResponse(
             task_id=task.task_id,
             status="queued",
@@ -71,7 +90,6 @@ async def queue_test_task(request: TestTaskRequest):
     except Exception as e:
         logger.exception("Failed to queue task")
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
 
 # ─── Endpoint 2: Queue and Wait for Result (Synchronous) ────────────────────
 @test_taskiq_router.post("/queue-and-wait", response_model=TaskStatusResponse)

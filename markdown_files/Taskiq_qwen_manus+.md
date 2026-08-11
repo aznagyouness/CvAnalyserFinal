@@ -178,16 +178,17 @@ def my_renamed_function(x, y):
 ```
 Now you can rename the Python function (even to my_renamed_function) and move the file – the Worker will always map "src.tasks.file:my_task" to whatever function is defined below the decorator. The Client never needs to change, and tasks always find their handler.
 
-Summary Table
-Step	Actor	Action
-1	Worker	Registers function with task_name at startup
-2	Client	Sends task using the same task_name string
-3	Broker	Stores message in queue
-4	Worker	Consumes message (destructive read)
-5	Worker	Extracts task_name from payload
-6	Worker	Looks up function in registry
-7	Worker	Executes mapped function
-8	Worker → Broker	Sends ACK, Broker removes task
+Summary Table :
+|Step|Actor|Action|
+|------|------|------|
+|1|Worker|Registers function with task_name at startup|
+|2|Client|Sends task using the same task_name string|
+|3|Broker|Stores message in queue|
+|4|Worker|Consumes message (destructive read)|
+|5|Worker|Extracts task_name from payload|
+|6|Worker|Looks up function in registry|
+|7|Worker|Executes mapped function|
+|8|Worker → Broker|Sends ACK, Broker removes task|
 
 ---
 ---
@@ -225,6 +226,151 @@ Redis acts as the high-speed traffic controller.
 *   **The Atomic `:run` Lock**: If not done, the middleware executes a `SET NX EX`.
     *   **NX (Not Exists)**: Only sets the key if it doesn't already exist.
     *   **EX (Expiry)**: Sets a TTL (e.g., 900s). This is your **Zombie Protection**. If the worker dies, the lock will automatically vanish, allowing a retry.
+
+#### Deep dive into the Redis Locking Mechanism
+
+##### The Redis "Bouncer" Check
+
+Redis acts as the high-speed traffic controller that decides whether a task should run or be skipped.
+
+###### The `:done` Check
+
+The middleware first checks if a key named `idem:<hash>:done` exists.
+
+- **If yes** → The task was already completed within the deduplication window (last 24h). Skip immediately.
+- **If no** → Proceed to the `:run` lock check.
+
+###### The Atomic `:run` Lock
+
+If the task is not done, the middleware executes a single atomic Redis command:
+
+```python
+run_key = f"idem:{task_hash}:run"  # e.g., "idem:a3f7...:run"
+
+acquired = await redis.set(run_key, "1", nx=True, ex=900)
+```
+
+| Flag | Meaning | Why It Matters |
+|------|---------|----------------|
+| `NX` (Not Exists) | Only sets the key if it does not already exist | Prevents two workers from both acquiring the lock |
+| `EX 900` (Expiry) | Key auto-deletes after 900 seconds (15 min) | If the worker dies, the lock vanishes — allowing retry |
+
+This command is **atomic**. Redis processes it as one indivisible operation. There is no race condition between "check if key exists" and "set the key."
+
+---
+
+##### Why `NX` Is Critical
+
+Without `NX`, you would need two separate commands:
+
+```python
+# ❌ BROKEN — race condition
+if not await redis.exists(run_key):   # Worker-A checks: False
+    await redis.set(run_key, "1")      # Worker-B checks: False (before A sets)
+                                       # Both A and B set the key. Both run.
+```
+
+Between `exists()` and `set()`, another worker can sneak in. With `NX`, the check and set are one operation:
+
+```python
+# ✅ SAFE — atomic
+await redis.set(run_key, "1", nx=True)  # Only one worker wins. The other gets None.
+```
+
+---
+
+##### Why `EX` Is Critical — Zombie Protection
+
+Without expiry, a crashed worker leaves a lock behind forever:
+
+```
+Worker-0 acquires lock → starts task → CRASHES (SIGKILL, OOM, power loss)
+    ↓
+Lock "idem:a3f7...:run" stays in Redis forever
+    ↓
+RabbitMQ redelivers the message to Worker-1
+    ↓
+Worker-1 checks Redis: lock still exists → skips execution
+    ↓
+Task never finishes. User polls forever.
+```
+
+This is a **zombie lock** — a lock held by a dead process.
+
+`EX=900` fixes this:
+
+```
+Worker-0 acquires lock at T+0 (expires at T+900)
+    ↓
+Worker-0 crashes at T+30
+    ↓
+Lock sits in Redis until T+900...
+    ↓
+At T+900, Redis auto-deletes the lock
+    ↓
+Redelivered message arrives at Worker-1 at T+901
+    ↓
+Worker-1 sees no lock → acquires it → executes task
+```
+
+The TTL is your **self-healing mechanism**. If the worker dies, the system recovers automatically.
+
+---
+
+##### The `:run` vs `:done` Key Lifecycle
+
+| Phase | Redis Key | Value | TTL |
+|-------|-----------|-------|-----|
+| Task queued | None | — | — |
+| Worker starts | `idem:{hash}:run` | `"1"` | `run_ttl` (900s) |
+| Worker finishes | `idem:{hash}:run` deleted | — | — |
+| | `idem:{hash}:done` | `"1"` | `done_ttl` (86,400s = 24h) |
+
+- The `:run` key is a **short-lived guard** (900s).
+- The `:done` key is a **long-lived tombstone** (24h) that prevents re-execution of completed tasks.
+
+---
+
+##### The Rule: `run_ttl` vs `timeout`
+
+| Setting | Controls | Should Be |
+|---------|----------|-----------|
+| `timeout=300.0` | Max task runtime before Taskiq kills it | Your actual SLA |
+| `run_ttl=900` | Redis lock TTL | **> timeout** (safety margin) |
+
+Your current config is correct:
+- `timeout=300s` (5 min) — Taskiq kills slow tasks
+- `run_ttl=900s` (15 min) — Lock outlives the task by 3×
+
+###### When to Worry
+
+If you change `timeout=1200` (20 min) but keep `run_ttl=900` (15 min), the lock expires **before** the task finishes. That is when duplicates happen.
+
+**Rule:** `run_ttl` must always be **greater than** `timeout`.
+
+---
+
+##### `.env.dev` Idempotency Settings
+
+```env
+# ── Idempotency ──────────────────────────────────────────────────────────────
+# run_ttl: Redis lock TTL (seconds). MUST exceed task timeout. Auto-releases if worker dies.
+IDEMPOTENCY_RUN_TTL = 900
+# done_ttl: Dedup window (seconds). Duplicate tasks are skipped within this period.
+IDEMPOTENCY_DONE_TTL = 86_400
+# strict_audit: True = fail task if Postgres audit insert fails. False = log and continue.
+IDEMPOTENCY_STRICT_AUDIT = True
+```
+
+##### `IDEMPOTENCY_STRICT_AUDIT` Explained
+
+| Value | Behavior | When to Use |
+|-------|----------|-------------|
+| `True` | If the audit insert to PostgreSQL fails, the **task itself fails** and is not executed | **Production** — you want every execution tracked |
+| `False` | If the audit insert fails, log the error but **continue executing the task anyway** | Emergency — PostgreSQL is down but tasks must keep running |
+
+Use `True` in production. Use `False` only as a temporary failover mode.
+
 
 ### 🗄️ Step 4: The PostgreSQL "Ledger" Entry
 Before the business logic starts, we create a persistent audit trail.

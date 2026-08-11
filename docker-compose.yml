@@ -155,7 +155,7 @@ services:
     image: rabbitmq:4.1.2-management-alpine
     container_name: rabbitmq
     ports:
-      - "5821:5821"   # AMQP port
+      - "7021:7021"   # AMQP port
       - "15672:15672" # Management UI port
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
@@ -175,7 +175,7 @@ services:
     image: redis:8.0.3-alpine
     container_name: redis
     ports:
-      - "6426:6426"
+      - "7020:7020"
     volumes:
       - redis_data:/data
     env_file:
@@ -184,12 +184,12 @@ services:
       - backend
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-minirag_redis_2222} -p ${REDIS_PORT:-6426} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-minirag_redis_2222} -p ${REDIS_PORT:-7020} ping | grep -q PONG"]
       timeout: 10s
       retries: 5
     command: [
       "redis-server",
-      "--port", "${REDIS_PORT:-6426}",
+      "--port", "${REDIS_PORT:-7020}",
       "--requirepass", "${REDIS_PASSWORD:-minirag_redis_2222}",
       "--appendonly", "${REDIS_APPENDONLY:-yes}",
       "--maxmemory", "${REDIS_MAXMEMORY:-512mb}",

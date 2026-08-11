@@ -1,39 +1,59 @@
-from src.tk_broker import broker
-from src.models.crud.AssetCrud import AssetCrud
-from src.database import get_utils
-from taskiq import TaskiqDepends
+# src/tasks/maintenance.py
+from __future__ import annotations
+
 import logging
+from datetime import datetime, timezone, timedelta
+from typing import Annotated
+
+from sqlalchemy import delete
+from taskiq import Context, TaskiqDepends
+
+from src.tk_broker import broker
+import src.database as db
+from src.models.db_schemes.cv_analysis_db.db_tables import TaskiqTaskExecution
 
 logger = logging.getLogger(__name__)
 
-@broker.task(task_name="maintenance.cleanup_old_assets")
-async def cleanup_old_assets_task(
-    days_old: int = 30,
-    db_utils = TaskiqDepends(get_utils)
-):
-    """
-    Periodic cleanup of old assets and their temporary files.
-    """
-    _, sessionmaker = db_utils
-    asset_crud = AssetCrud(db_client=sessionmaker)
-    
-    # Assuming delete_old_assets is implemented in AssetCrud
-    try:
-        deleted_count = await asset_crud.delete_old_assets(days=days_old)
-        logger.info(f"Cleanup complete: {deleted_count} assets removed.")
-        return {"status": "success", "deleted": deleted_count}
-    except Exception as e:
-        logger.error(f"Cleanup failed: {e}")
-        return {"status": "error", "message": str(e)}
 
-@broker.task(task_name="maintenance.optimize_qdrant")
-async def optimize_qdrant_task(
-    project_id: int,
+@broker.task(
+    task_name="src.tasks.maintenance:archive_old_task_executions",
+    timeout=300.0,  # 5 minutes max
+    labels={"queue": "maintenance"},
+)
+async def archive_old_task_executions(
+    older_than_days: int = 90,
+    context: Annotated[Context, TaskiqDepends()] = None,
 ):
     """
-    Trigger Qdrant collection optimization (compaction/indexing).
-    Useful after large batch imports.
+    Deletes task execution audit records older than N days.
+    Should be scheduled via cron (e.g., daily at 2 AM) to prevent 
+    the audit table from growing infinitely.
     """
-    # Placeholder for actual optimization logic
-    # In Qdrant, this usually happens automatically, but can be triggered via API
-    return f"Optimization triggered for project {project_id}"
+    # 1. Check idempotency skip flag
+    if context and context.message.labels.get("should_skip") == "true":
+        return {"status": "skipped_by_idempotency"}
+
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    logger.info(f"Archiving taskiq_task_executions older than {cutoff_date}")
+
+    # 2. Ensure DB is initialized (Worker context)
+    if db.db_session_factory is None:
+        logger.error("Database session factory is not initialized!")
+        return {"status": "error", "message": "DB not initialized"}
+
+    # 3. Execute the deletion using a short-lived session
+    try:
+        async with db.db_session_factory() as session:
+            stmt = delete(TaskiqTaskExecution).where(
+                TaskiqTaskExecution.completed_at < cutoff_date
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            
+            deleted_count = result.rowcount
+            logger.info(f"Successfully archived {deleted_count} old task execution records.")
+            return {"status": "success", "deleted_count": deleted_count}
+            
+    except Exception as e:
+        logger.exception("Failed to archive old task executions")
+        return {"status": "error", "message": str(e)}

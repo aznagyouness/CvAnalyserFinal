@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     APPDESCRIPTION: str
     APP_AUTHOR: str
     APP_AUTHOR_EMAIL: str
+    ENVIRONMENT: str = "dev"
+    LOG_LEVEL: str = "INFO"
+    LOG_JSON: bool = True
+    INFRA_LOG_LEVEL: str = "WARNING"
 
 
     FILE_ALLOWED_TYPES: List[str]

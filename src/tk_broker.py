@@ -12,7 +12,12 @@ import src.database as db
 from src.helpers.config import get_settings
 from src.utils.taskiq_idempotency import TaskiqIdempotencyMiddleware  # ← Only import this
 
-logger = logging.getLogger(__name__)
+from src.observability.logging import configure_logging,get_logger
+from src.observability.middleware import TaskiqContextPropagationMiddleware
+# CRITICAL: configure logging BEFORE any other imports that might log
+configure_logging()
+
+logger = get_logger(__name__)
 settings = get_settings()
 
 # 1. Result backend
@@ -65,6 +70,7 @@ idempotency_middleware = TaskiqIdempotencyMiddleware(
 
 
 broker = broker.with_middlewares(
+    TaskiqContextPropagationMiddleware(),  # ← ADD THIS FIRST
     PrometheusMiddleware(server_addr="0.0.0.0", server_port=9000),  # outermost: sees EVERYTHING  # Sees the message first. Measures total lifecycle including idempotency + retries + task execution.
     SimpleRetryMiddleware(default_retry_count=3),                    # middle: handles failures   # Wraps the idempotency check + task. Hides retries from the inner layers.
     idempotency_middleware,                                          # innermost: gate just before execution  # Sits right above the task. Decides on duplicates just-in-time, right before the actual function runs.
